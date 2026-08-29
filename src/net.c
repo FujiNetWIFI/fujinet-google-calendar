@@ -32,7 +32,7 @@
 
 #ifndef GC_FAKE_DATA
 static char          url[112];
-static unsigned char rxbuf[512];
+static unsigned char rxbuf[GC_RXBUF];
 
 static unsigned int  st_bw;
 static unsigned char st_conn;

@@ -251,7 +251,6 @@ void ui_error(unsigned char code)
 /* ------------------------------------------------------------------ */
 
 #define PICK_TOP    4
-#define PICK_ROWS   12
 
 void ui_pick(unsigned char sel, unsigned char first)
 {

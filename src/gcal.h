@@ -9,7 +9,15 @@
 #ifndef GCAL_H
 #define GCAL_H
 
+/*
+ * CMOC has no <stdint.h>. Nothing in this header needs one either: the only
+ * uintN_t in the portable half is in settings.c, which includes
+ * <fujinet-fuji.h> first -- and that header #defines uint8_t and uint16_t
+ * itself under _CMOC_VERSION_.
+ */
+#ifndef _CMOC_VERSION_
 #include <stdint.h>
+#endif
 
 /* ------------------------------------------------------------------ */
 /* Sizing                                                              */
@@ -36,7 +44,9 @@
  * (?count= only bounds AGENDA); past MAX_EVENTS we keep what arrived and set
  * gc_trunc, which the status line reports as "more".
  */
+#ifndef MAX_EVENTS
 #define MAX_EVENTS      64
+#endif
 
 /*
  * 39 characters plus NUL. At the width we ask for, the wire gives 41-49
@@ -57,8 +67,12 @@
    caps a window at 300, so three digits always suffice. */
 #define EVNUM_LEN       6
 
-/* Agenda display list: at most one separator per event, plus the events. */
-#define AGD_MAX         128
+/* Agenda display list: at most one separator per event, plus the events, so
+   twice MAX_EVENTS is the exact bound. Overridable only to trade the tail of a
+   very fragmented agenda for bytes -- agenda_build() stops at AGD_MAX. */
+#ifndef AGD_MAX
+#define AGD_MAX         (MAX_EVENTS * 2)
+#endif
 
 /* GCAL_MAX_CALENDARS is 8; plus "all shown calendars" and one spare. */
 #define CAL_MAX         10
@@ -85,6 +99,15 @@
 /* Longest raw line accumulated before a hard flush. A width-80 listing row
    never exceeds 80, and the detail text arrives pre-wrapped at 38 or 80. */
 #define LINE_CAP        132
+
+/*
+ * The network receive buffer. Every reader drains through split_lines(), which
+ * is indifferent to where a chunk boundary lands, so shrinking this costs only
+ * round trips -- which is the trade a machine with 28K of program space wants.
+ */
+#ifndef GC_RXBUF
+#define GC_RXBUF        512
+#endif
 
 /*
  * The detail ingest's own accumulator. It matches LINE_CAP unless DET_REFLOW is
@@ -383,6 +406,17 @@ extern unsigned char al_ev;
 #endif
 #ifndef DET_WIN
 #define DET_WIN     18
+#endif
+
+/*
+ * The calendar picker's window. main.c bounds its own scrolling by this and
+ * every backend paints exactly this many rows: the two have to agree, or the
+ * window advances a row early and the rows past it are painted stale. It lives
+ * here rather than in each backend because that is exactly the disagreement
+ * that went unnoticed while there were only two of them.
+ */
+#ifndef PICK_ROWS
+#define PICK_ROWS   12
 #endif
 
 /* Portable key codes returned by plat_getkey(). */

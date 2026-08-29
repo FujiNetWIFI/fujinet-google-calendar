@@ -266,7 +266,7 @@ static void do_detail(void)
 
     for (;;) {
         k = plat_getkey();
-        span = (gc_det_rows > DET_WIN) ? gc_det_rows - DET_WIN : 0;
+        span = (gc_det_rows > DET_WIN) ? gc_det_rows - DET_WIN : 0u;
 
         switch (k) {
         case K_UP:
@@ -284,7 +284,7 @@ static void do_detail(void)
             break;
 
         case K_LEFT:
-            top = (top > DET_WIN) ? top - DET_WIN : 0;
+            top = (top > DET_WIN) ? top - DET_WIN : 0u;
             ui_detail(ev, top);
             break;
 
@@ -307,7 +307,8 @@ static void do_detail(void)
 /* Calendar picker                                                     */
 /* ------------------------------------------------------------------ */
 
-#define PICK_ROWS   12
+/* PICK_ROWS is gcal.h's: this scroll window and the backend's painted row
+   count are the same number, and they used to disagree. */
 
 static void do_pick(void)
 {

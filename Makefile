@@ -46,6 +46,11 @@ LDFLAGS_EXTRA_ATARI += --mapfile r2r/atari/gcal.map
 CFLAGS_EXTRA_APPLE2ENH  = -DTITLE_LEN=50 -DDET_COLS=78 -DDET_ROWS=32
 CFLAGS_EXTRA_APPLE2ENH += -DDET_LINE_CAP=512 -DDET_REFLOW -DLIST_ROWS=18
 
+# The picker window. It used to be 14 in src/apple2enh/ui.c and 12 in main.c,
+# which is a scroll that advances a row early -- latent only because CAL_MAX is
+# 10. PICK_ROWS now lives in gcal.h so there is one number, not two.
+CFLAGS_EXTRA_APPLE2ENH += -DPICK_ROWS=14
+
 # The category column off the wire, which needs somewhere to be shown and
 # 960 bytes to be kept. The Atari has neither.
 CFLAGS_EXTRA_APPLE2ENH += -DGC_KEEP_CAT
@@ -63,6 +68,88 @@ CFLAGS_EXTRA_APPLE2ENH += -DGC_KEEP_CAT
 # screen's buffers are paid for out of.
 LDFLAGS_EXTRA_APPLE2ENH  = -Wl -D,__HIMEM__=0xBF00
 LDFLAGS_EXTRA_APPLE2ENH += --mapfile r2r/apple2enh/gcal.map
+
+# The CoCo runs at 32x16 on the VDG's semigraphics page, which is the
+# narrowest and shortest screen this client has ever had -- and the only one
+# besides the Atari's that can show an event's real Google colour.
+#
+# LIST_ROWS 11 is rows 2-12; rows 13-14 are the panel that spells the selection
+# out, which earns its keep harder here than on the Atari because the list's
+# title column is 23 columns rather than 30. DET_WIN 12 x DET_ROWS 24 is exactly
+# two pages. MAX_EVENTS 32 is three DAY screens and is what ?count= then asks
+# the adapter for.
+#
+# TITLE_LEN is 40 rather than the 32 the list column could use: the panel is two
+# rows of 32, and "09:00-10:00  " leaves 51 of those for the title, so 39
+# characters is what the screen can actually show. Anything shorter leaves the
+# panel half empty. It costs MAX_EVENTS times the difference, which the link has
+# the room for -- check r2r/coco/gcal.map against the $7C00 ceiling if you move
+# either number.
+CFLAGS_EXTRA_COCO  = -DLIST_ROWS=11 -DPICK_ROWS=10 -DDET_WIN=12
+CFLAGS_EXTRA_COCO += -DDET_COLS=32 -DDET_ROWS=24
+CFLAGS_EXTRA_COCO += -DMAX_EVENTS=32 -DTITLE_LEN=40
+CFLAGS_EXTRA_COCO += -DGC_RXBUF=256
+
+# fujinet-lib declares clock_get_tz for every platform but only builds it for
+# some: the CoCo archive carries fn_clock/clock_get_time.o and nothing else, so
+# calling it is an undefined symbol at link. See src/clock.c and src/coco/ui.c.
+CFLAGS_EXTRA_COCO += -DGC_NO_CLOCK_TZ
+
+CFLAGS_EXTRA_COCO += -fomit-frame-pointer
+
+# CMOC declares the string and memory functions in <cmoc.h> and ships no
+# <string.h> at all. src/coco/include/ holds a shim so the portable half can go
+# on including it the way ordinary C89 does; the directory has no .c files, so
+# the source glob steps over it.
+CFLAGS_EXTRA_COCO += -Isrc/coco/include
+
+# tools/coco-shot.sh appends -DGC_FAKE_DATA / -DGC_FAKE_KEYS through here. It
+# cannot set CFLAGS_EXTRA_COCO on the command line the way tools/atari-shot.sh
+# does, because on this platform that variable carries every screen-shape knob
+# above and a command-line assignment would replace the lot.
+CFLAGS_EXTRA_COCO += $(COCO_SHOT_FLAGS)
+
+# With Disk BASIC present a BASIC program lives at $0E00, so the one thing the
+# org must not do is collide with the AUTOEXEC that is running LOADM. $1000
+# leaves that program 512 bytes -- it is one line, about 25 tokenised bytes,
+# with no variables -- and gives us $1000 to $7C00, which is 27,648 for code,
+# data and bss.
+#
+# Other CoCo clients in this family (fujinet-news, fujinet-config) org at $0E00
+# and pay for it with a second-stage loader that pokes BASIC's direct-mode
+# buffer and jumps into RUNM. That trick is ROM-version sensitive -- it gives
+# ?UL ERROR on stock Disk BASIC 1.1 -- and 512 bytes is a cheaper price than a
+# whole extra binary with its own file-type trap.
+#
+# The stack is placed explicitly rather than inherited from BASIC. LOADM leaves
+# S wherever CLEAR put it, which moves if anyone edits the AUTOEXEC; $7F00
+# grows down into the 3K between our end and BASIC's string space and does not.
+#
+# --limit is what turns "silently corrupts the stack" into a build failure, so
+# it goes in from the first link rather than after the first mystery. -i keeps
+# the .map, which tools/coco-shot.sh reads its breakpoint symbol out of.
+LDFLAGS_EXTRA_COCO  = --org=1000 --limit=7C00 --initial-s=7F00
+LDFLAGS_EXTRA_COCO += --no-relocate -i
+
+# The disk carries GCAL.BIN and nothing else. It is started with
+#
+#   LOADM"GCAL":EXEC
+#
+# and there is deliberately no AUTOEXEC.BAS to do that for you, because neither
+# way of putting one on the disk survives contact:
+#
+#   - decb's -t runs its own BASIC tokeniser, and it does not know LOADM. It
+#     matches LOAD greedily and leaves the M as text, so the line comes back as
+#     LOAD M"GCAL" and RUN answers ?SN ERROR.
+#   - Stored as ASCII with -a -l, BASIC tokenises it correctly on the way in --
+#     and then ?SN ERRORs anyway, because Disk BASIC runs an ASCII program out
+#     of the disk buffer that LOADM itself needs. Disk I/O from an ASCII-loaded
+#     program does not work.
+#
+# fujinet-news and fujinet-config get around this with a second-stage loader
+# that pokes BASIC's direct-mode buffer and jumps into RUNM. That trick is ROM
+# sensitive -- it gives ?UL ERROR on stock Disk BASIC 1.1 -- and one typed line
+# is a smaller price than a second binary that only works on some ROMs.
 
 # HIRESTXT_LIB can be
 # - a version number such as 0.5.0.2

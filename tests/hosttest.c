@@ -765,8 +765,16 @@ static void test_detail(void)
     eq_str("first kept row", gc_det[0], "Where: Room 3");
     eq_str("second kept row", gc_det[1], "Bring the roadmap.");
 
-    /* Text the adapter already wrapped to 38 columns has to pass through
-       untouched -- that is what BUILD_ATARI sends. */
+    /*
+     * What the adapter's own 38-column wrap does depends on whether the screen
+     * is at least that wide, so this is the one place the three shapes have to
+     * expect different answers.
+     *
+     * At 40 and 78 the line passes through untouched, which is the property
+     * BUILD_ATARI's default relies on. At 32 there is nothing to pass through:
+     * the client necessarily re-wraps, and what is worth asserting is that the
+     * words survive it. The CoCo is the first backend narrower than the wire.
+     */
     detail_reset();
     ingest("skip1");
     detail_ingest(&eol, 1);
@@ -774,8 +782,14 @@ static void test_detail(void)
     detail_ingest(&eol, 1);
     ingest("A line of exactly thirty-eight chars.");
     detail_finish();
+#if DET_COLS >= 38
     eq_int("38-col passthrough rows", gc_det_rows, 1);
     eq_str("38-col passthrough", gc_det[0], "A line of exactly thirty-eight chars.");
+#else
+    eq_int("38-col re-wrap rows", gc_det_rows, 2);
+    eq_str("38-col re-wrap head", gc_det[0], "A line of exactly thirty-eight");
+    eq_str("38-col re-wrap tail", gc_det[1], "chars.");
+#endif
 
     /* An 80-column line, which is what fujinet-pc sends, splits cleanly. */
     detail_reset();
@@ -786,7 +800,13 @@ static void test_detail(void)
     ingest("aaaa bbbb cccc dddd eeee ffff gggg hhhh "
            "iiii jjjj kkkk llll mmmm nnnn oooo pppp");
     detail_finish();
+#if DET_COLS >= 40
     eq_int("80-col splits", gc_det_rows, 2);
+#else
+    eq_int("80-col splits", gc_det_rows, 3);
+    eq_str("80-col split row0", gc_det[0], "aaaa bbbb cccc dddd eeee ffff");
+    eq_str("80-col split row2", gc_det[2], "mmmm nnnn oooo pppp");
+#endif
 
     /* CRLF must not produce a blank row between every line. */
     detail_reset();

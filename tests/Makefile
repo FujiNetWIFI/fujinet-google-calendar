@@ -16,6 +16,12 @@ CFLAGS  ?= -O1 -g -Wall -Wextra -Wno-unused-parameter
 CFLAGS80 = -DTITLE_LEN=50 -DDET_COLS=78 -DDET_ROWS=32 -DDET_LINE_CAP=512 \
            -DDET_REFLOW -DGC_KEEP_CAT
 
+# Keep in step with CFLAGS_EXTRA_COCO. This is the only shape that exercises
+# MAX_EVENTS at anything but 64, which is what the truncation and agenda
+# overflow assertions are actually about -- and the only one where AGD_MAX is
+# derived rather than the literal 128 both the others happen to get.
+CFLAGS32 = -DMAX_EVENTS=32 -DTITLE_LEN=40 -DDET_COLS=32 -DDET_ROWS=24
+
 SRC = hosttest.c \
       ../src/wrap.c \
       ../src/sanitize.c \
@@ -28,9 +34,10 @@ SRC = hosttest.c \
       ../src/alarm.c \
       ../src/model.c
 
-all: hosttest hosttest80
+all: hosttest hosttest80 hosttest32
 	./hosttest
 	./hosttest80
+	./hosttest32
 
 hosttest: $(SRC) ../src/gcal.h
 	$(CC) $(CFLAGS) -o $@ $(SRC)
@@ -38,7 +45,10 @@ hosttest: $(SRC) ../src/gcal.h
 hosttest80: $(SRC) ../src/gcal.h
 	$(CC) $(CFLAGS) $(CFLAGS80) -o $@ $(SRC)
 
+hosttest32: $(SRC) ../src/gcal.h
+	$(CC) $(CFLAGS) $(CFLAGS32) -o $@ $(SRC)
+
 clean:
-	rm -f hosttest hosttest80
+	rm -f hosttest hosttest80 hosttest32
 
 .PHONY: all clean

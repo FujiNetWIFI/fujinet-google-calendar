@@ -7,7 +7,7 @@ Two implementations live here:
 
 - `intv/` — the original, in IntyBASIC for the Intellivision.
 - `src/` — a C port. The portable core is in `src/`, the machine-specific half
-  in `src/<platform>/`. Atari 8-bit and Apple II backends exist so far.
+  in `src/<platform>/`. Atari 8-bit, Apple II and CoCo backends exist so far.
 
 Day, week, month and agenda views; an event detail screen; a calendar picker; a
 settings page; and alarms synthesised on the client, because the adapter's
@@ -18,17 +18,27 @@ field mask never asks Google for reminders.
 ```
 defoogi make atari          # -> r2r/atari/gcal.com and r2r/atari/gcal.atr
 defoogi make apple2enh      # -> r2r/apple2enh/gcal.a2s and gcal.po
+defoogi make coco           # -> r2r/coco/gcal.bin and gcal.dsk
 make -C tests               # host-native tests of the portable core
 ```
 
-[defoogi](https://github.com/FozzTexx/defoogi) carries cl65, `dir2atr`, `atr`
-and `ac`, so no host toolchain is needed; plain `make atari` works too if you
-have them. fujinet-lib is fetched into `_cache/` automatically.
+[defoogi](https://github.com/FozzTexx/defoogi) carries cl65, cmoc, `dir2atr`,
+`atr`, `ac` and `decb`, so no host toolchain is needed; plain `make atari` works
+too if you have them. fujinet-lib is fetched into `_cache/` automatically.
 
 The Apple II target is `apple2enh` — an enhanced //e with 80-column hardware.
 `apple2` is not a build of this: it is the unenhanced machine, with no
 MouseText and a character generator that would render the chip column as
 random inverse capitals.
+
+The CoCo disk holds `GCAL.BIN` and nothing else. Start it with
+
+```
+LOADM"GCAL":EXEC
+```
+
+There is deliberately no `AUTOEXEC.BAS`, and the top-level `Makefile` explains
+at length why neither way of putting one there survives contact.
 
 ## Using it
 
@@ -46,9 +56,14 @@ The cursor keys need Ctrl held down on an Atari, so the bare keycaps they live
 on — `-` `=` `+` `*` — are accepted too. An enhanced //e has real arrow keys
 and needs no such workaround.
 
-The header carries a tab strip showing which digit selects which view, which is
-what keeps the footer to a single row; the Intellivision needed two hint pages
-at twenty columns.
+A CoCo has no `ESC` key, so **`BREAK`** is settings-and-back there, which is
+what every other FujiNet CoCo client does; `CLEAR` joins `R` as refresh.
+
+On the Atari and the Apple the header carries a tab strip showing which digit
+selects which view, which is what keeps the footer to a single row. Sixteen rows
+will not pay for one, so the CoCo's footer says `1-4:VIEW` instead and its
+settings screen legends the rest — the trade the Intellivision made at twenty
+columns with two hint pages.
 
 ## Server setup
 
@@ -191,18 +206,111 @@ noticeably short one can only be the last of something. The wrap width is
 estimated from the reply itself, which is what lets one rule serve both the 38
 of Atari firmware and the 80 of every other bus.
 
+## CoCo implementation notes
+
+**Semigraphics is per byte, so colour is free.** The 6847 decides from bit 7
+whether a cell is a character or a 2×2 block of colour, with no mode switch and
+no second display list: `$00-$3F` is a glyph with INV asserted, `$40-$7F` the
+same glyph normal, `$80-$FF` a colour and a quadrant mask. So this is the only
+backend besides the Atari that shows an event's real Google colour, and unlike
+the Atari it does not have to steer four players from an interrupt to do it —
+the chip is a byte in screen RAM. Google's four brand colours land on four of
+the eight the VDG has, Graphite lands on buff, and that is exactly the five
+chips `color.c` quantises its eleven colour names onto.
+
+**Two views are better here than at 40 or 80 columns.** WEEK draws each day's
+whole load as a strip of chips, one per event in its own colour — the
+Intellivision's design, which both wider backends dropped in favour of a single
+lead-event title. MONTH gives each day a four-cell density bar in the colour of
+its leading event: sixteen steps, against the Atari's monochrome four and the
+Apple's monochrome eight. That is where the 32-column budget is paid back.
+
+**Column 0 stays out of the selection bar, for a third unrelated reason.**
+Inverse video is XOR `$40`, and on a byte `≥ $80` bit 6 is part of the colour
+field — so inverting a chip recolours it rather than highlighting it. The Atari
+keeps its column 0 out because an inverse space is COLPF1 and covers the
+player; the Apple because MouseText has no inverse form; the Intellivision
+because the colour-stack run has to continue past the selection. Four machines,
+four unrelated reasons, one rule.
+
+**The gutter is black, not empty.** An unlit SG4 quadrant is black and the text
+background is green, so a solid *green* chip on a text row is invisible — and
+green is one of the five, carrying Sage and Basil. Every row therefore gets an
+explicit `SG_BLACK` in column 0 whether it has a chip or not, which makes every
+colour read and hands the backend a black rule primitive besides. That is what
+draws the agenda separator's rule and the divider under the week grid, where
+the Apple uses MouseText.
+
+**The blank byte is `$60`, and there is no lowercase.** `memset(scr, 0, ...)`
+paints a screen of inverse `@`. And the ROM has sixty-four glyphs, uppercase
+only, so `sc()` folds case and every literal in `src/coco/` is written in
+capitals. Recurring events are marked `+` rather than the `~` the other two use,
+because a tilde is not one of the sixty-four and would fold to `?` — which
+reads as "something went wrong" instead of "this repeats".
+
+**The mark is drawn, and the "31" is punched out of it.** The Atari and the
+Apple both print those two digits as ordinary text in the middle of the mark;
+text here is green and never white. So the large mark is a cell-thick
+four-colour ring around a buff page with the digits punched out as *unlit*
+quadrants, which works because one colour plus a 2×2 on/off mask per cell is
+exactly what SG4 gives you. The small one is four cells on two rows — a page
+with a brand-coloured post at each corner — and it costs the header no rows,
+because the header is two rows whatever goes in it.
+
+**`plat_ticks()` extends a 16-bit counter.** Color BASIC's 60 Hz TIMER at
+`$0112` wraps every eighteen minutes, and `clock.c` treats a backwards step as a
+wrap and resets its baseline — throwing away everything since. So the backend
+folds it into a monotonic 32-bit count, which is only correct if somebody calls
+it once per wrap. That is why `plat_getkey()` polls `inkey()` around
+`plat_vsync()` rather than calling CMOC's `waitkey()`: `plat_vsync()` folds, so
+the count keeps rising while the event, picker and settings screens wait. It is
+the Apple II's reason for polling arriving at the same answer from the other
+direction.
+
+**`clock_get_tz()` does not exist on this bus.** fujinet-lib declares it for
+every platform and builds it for some; the CoCo archive holds
+`fn_clock/clock_get_time.o` and nothing else, so calling it is an undefined
+symbol at link — hence `GC_NO_CLOCK_TZ`. The settings screen must not then
+print "(unset)": the timezone may be perfectly set and we simply cannot read it
+back. It shows the FujiNet clock's own reading instead, which is the observable
+*consequence* of the same `[General] timezone` and the actual symptom anyone
+would check.
+
+**The program is linked at `$1000`, not `$0E00`.** With Disk BASIC present a
+BASIC program lives at `$0E00`, so `LOADM` into `$0E00` destroys the line that
+is running it. fujinet-news and fujinet-config pay for that address with a
+second-stage loader that pokes BASIC's direct-mode buffer and jumps into RUNM;
+that trick is ROM-sensitive and gives `?UL ERROR` on stock Disk BASIC 1.1.
+Giving BASIC 512 bytes is a cheaper price than a second binary that only works
+on some ROMs, and it still leaves about 1.5K spare under the `$7C00` ceiling.
+`--limit` is what turns "silently corrupts the stack" into a build failure, and
+`plat_shutdown()` cold-starts rather than returning, because there is nothing
+left to return to.
+
+**A DriveWire transfer stops the clock.** `dwread` jumps through `[$D93F]`,
+which masks interrupts for the duration, so TIMER itself stops and the wall
+clock loses the length of every fetch. That is the Apple's SmartPort situation
+exactly, and the half-hour resync in `clock.c` is what bounds it.
+
 ## Testing
 
-`make -C tests` builds the portable core natively, twice, and runs about 200
-assertions over the date arithmetic, the whole-token colour match, the listing
-parser's column derivation, the line splitter, the agenda builder, the wrap and
-sanitize helpers, the detail ingest and every one of the alarm firing rules.
-None of it needs a 6502.
+`make -C tests` builds the portable core natively, three times, and runs about
+200 assertions over the date arithmetic, the whole-token colour match, the
+listing parser's column derivation, the line splitter, the agenda builder, the
+wrap and sanitize helpers, the detail ingest and every one of the alarm firing
+rules. None of it needs a 6502.
 
-Twice, because the core's fixed widths are overridable and the backends do
-override them: `hosttest` is the Atari's shape and `hosttest80` the Apple II's,
+Three times, because the core's fixed widths are overridable and the backends do
+override them. `hosttest` is the Atari's shape; `hosttest80` the Apple II's,
 which is the only way the reflow path is covered at all — it compiles out
-entirely without `DET_REFLOW`.
+entirely without `DET_REFLOW`; and `hosttest32` the CoCo's, which is the only
+one with `MAX_EVENTS` at anything but 64 and so the only one where the
+truncation and agenda-overflow assertions mean anything.
+
+One assertion differs by shape rather than passing everywhere, and it is the
+honest kind: text the adapter already wrapped to 38 columns passes through
+untouched at 40 and 78, and at 32 it cannot — the client necessarily re-wraps,
+and what is worth asserting there is that the words survive it.
 
 `src/lines.c` exists because of one of those shapes. `Protocol.h`'s
 `lineEnding` is per bus and they do not agree: SIO leaves it at `$9B`, but
@@ -251,6 +359,39 @@ to get wrong and all three are documented in `tools/apple2-run.py`:
 never creates the window that F11 is read through, and `set_escdelay(0)` means
 the F11 sequence has to arrive in one write.
 
+`tools/coco-shot.sh` is the third, same arguments again:
+
+```
+tools/coco-shot.sh                     # canned data, first screen
+tools/coco-shot.sh "K_VIEW3"           # canned data, scripted keys
+REAL=1 TMO=300 tools/coco-shot.sh      # against fujinet-pc-coco
+```
+
+It drives [xroar](https://www.6809.org.uk/xroar/) over its GDB target, waits
+until the CPU is inside `plat_vsync()` — where the program comes to rest once
+its scripted keys are spent — and reads the 512 bytes of the text page out of
+the running machine. That is the *entire* visual state, so `coco-decode.py` can
+report every cell's glyph, its video sense and, for a semigraphics cell, its
+colour and quadrant mask. The chip gutter, the WEEK chip strip, the MONTH
+density bars and the "31" punched out of the mark are all checkable that way,
+and not one of them would be from a picture of text. It is better instrumented
+than either of the other two.
+
+Point `XROAR` at the binary if it is not at `~/Workspace/xroar-1.5.5/src/xroar`,
+and `ROMPATH` at Color BASIC plus an HDB-DOS DriveWire ROM — `REAL=1` needs the
+latter, because `dwread`'s `[$D93F]` vector only exists there. xroar's Becker
+port defaults to 65504 and so does fujinet-pc-coco's boip port, so the two find
+each other with no configuration.
+
+Four things about driving it are easy to get wrong and all four are documented
+in the two scripts: `-timeout` counts *emulated* seconds, so pairing it with
+`-no-ratelimit` makes it fire before the machine has booted; the RETURN in
+`-type` must be `\r`, because `\n` maps to the CoCo's DOWN ARROW and types the
+command without entering it; the GDB listen backlog is one deep and `accept()`
+runs off the emulator thread, so the first `?` has to be retried; and `Z0`
+breakpoints are accepted, answer `OK`, and never fire — which is why the
+capture polls the PC instead.
+
 ## Layout
 
 ```
@@ -293,7 +434,17 @@ src/apple2enh/  Apple //e (enhanced) backend
   timer.c       the frame counter we keep ourselves
   sound.c       the chime
   tone.s        the square wave
-tests/          host-native tests, built at both screen shapes
+src/coco/       Tandy Color Computer backend
+  platform.h    geometry, the SG4 byte map, internal API
+  screen.c      the blitter, the 6847 screen-code mapping, raw SG4 access
+  ui.c          chrome, flat screens, picker, settings
+  views.c       the four views, event detail, alarm banner
+  logo.c        the mark, with "31" punched out of it
+  input.c       key mapping and the polling blocking read
+  timer.c       the 16-bit TIMER, extended to 32 bits
+  sound.c       the chime
+  include/      a <string.h> shim, because CMOC ships none
+tests/          host-native tests, built at all three screen shapes
 tools/          headless capture and decode, per platform
 mekkogx/        the cross-platform build template
 ```

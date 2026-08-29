@@ -85,6 +85,20 @@ unsigned char clk_get_tz(char *dst, unsigned char dstsize)
     dst[0] = 'C'; dst[1] = 'S'; dst[2] = 'T'; dst[3] = '6';
     dst[4] = 'C'; dst[5] = 'D'; dst[6] = 'T';
     ok = 1;
+#elif defined(GC_NO_CLOCK_TZ)
+    /*
+     * fujinet-lib declares clock_get_tz for every platform but only builds it
+     * for some: the CoCo archive carries fn_clock/clock_get_time.o and nothing
+     * else, so calling it is an undefined symbol at link.
+     *
+     * A backend that cannot ask must not then print "(unset)" -- the timezone
+     * may be perfectly set and we simply have no way to read it back. Show the
+     * clock's own reading instead, which is the observable consequence of the
+     * same [General] setting and the actual symptom anyone would check. See
+     * src/coco/ui.c.
+     */
+    (void) dst;
+    ok = 0;
 #else
     plat_net_begin();
     ok = (clock_get_tz(dst) == FN_ERR_OK);
