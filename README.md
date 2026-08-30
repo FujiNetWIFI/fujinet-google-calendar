@@ -7,7 +7,8 @@ Two implementations live here:
 
 - `intv/` — the original, in IntyBASIC for the Intellivision.
 - `src/` — a C port. The portable core is in `src/`, the machine-specific half
-  in `src/<platform>/`. Atari 8-bit, Apple II and CoCo backends exist so far.
+  in `src/<platform>/`. Atari 8-bit, Apple II, CoCo and Coleco Adam backends
+  exist so far.
 
 Day, week, month and agenda views; an event detail screen; a calendar picker; a
 settings page; and alarms synthesised on the client, because the adapter's
@@ -19,12 +20,14 @@ field mask never asks Google for reminders.
 defoogi make atari          # -> r2r/atari/gcal.com and r2r/atari/gcal.atr
 defoogi make apple2enh      # -> r2r/apple2enh/gcal.a2s and gcal.po
 defoogi make coco           # -> r2r/coco/gcal.bin and gcal.dsk
+defoogi make adam           # -> r2r/adam/gcal.ddp and gcal_BOOTSTRAP.bin
 make -C tests               # host-native tests of the portable core
 ```
 
-[defoogi](https://github.com/FozzTexx/defoogi) carries cl65, cmoc, `dir2atr`,
-`atr`, `ac` and `decb`, so no host toolchain is needed; plain `make atari` works
-too if you have them. fujinet-lib is fetched into `_cache/` automatically.
+[defoogi](https://github.com/FozzTexx/defoogi) carries cl65, cmoc, zcc,
+`eos.lib`, `smartkeys.lib`, `dir2atr`, `atr`, `ac` and `decb`, so no host
+toolchain is needed; plain `make atari` works too if you have them. fujinet-lib
+is fetched into `_cache/` automatically.
 
 The Apple II target is `apple2enh` — an enhanced //e with 80-column hardware.
 `apple2` is not a build of this: it is the unenhanced machine, with no
@@ -39,6 +42,16 @@ LOADM"GCAL":EXEC
 
 There is deliberately no `AUTOEXEC.BAS`, and the top-level `Makefile` explains
 at length why neither way of putting one there survives contact.
+
+The Adam target produces a 256K digital data pack. Copy `gcal.ddp` somewhere a
+FujiNet can serve it, mount it in disk slot 1 from CONFIG, and boot — what is in
+slot 1 is what the ADAM boots. `gcal_BOOTSTRAP.bin` is the 43-byte boot block,
+already the first 1K of the `.ddp`; it is written out separately by z88dk's
+appmake and nothing needs to be done with it.
+
+`adam_cpm` is deliberately not in `PLATFORMS`. `PLATFORM_COMBOS` expands it to
+`src/adam/` as well, so listing it would compile this backend's EOS and
+SmartKeys calls into a CP/M binary that links neither library.
 
 ## Using it
 
@@ -58,6 +71,22 @@ and needs no such workaround.
 
 A CoCo has no `ESC` key, so **`BREAK`** is settings-and-back there, which is
 what every other FujiNet CoCo client does; `CLEAR` joins `R` as refresh.
+
+The Adam has all of the above and six labelled SmartKeys besides, whose captions
+are drawn on the bottom three rows of the screen. Every screen declares its own,
+and the list screens have two banks because they have more than six actions:
+
+| | I | II | III | IV | V | VI |
+|---|---|---|---|---|---|---|
+| list | Day | Week | Month | Agenda | Today | More |
+| more | Refresh | Setup | Quit | | | Back |
+| detail | Pg Up | Pg Dn | Up | Down | | Back |
+| picker | Up | Down | | | Pick | Back |
+| settings | Less | More | | Cal | | Save |
+
+`More` and `Back` on the list screens are the bank toggle and never reach the
+program's key handling at all. The keyboard keys keep working everywhere: the
+SmartKeys are the discoverable subset, not the whole of it.
 
 On the Atari and the Apple the header carries a tab strip showing which digit
 selects which view, which is what keeps the footer to a single row. Sixteen rows
@@ -292,20 +321,176 @@ which masks interrupts for the duration, so TIMER itself stops and the wall
 clock loses the length of every fetch. That is the Apple's SmartPort situation
 exactly, and the half-hour resync in `clock.c` is what bounds it.
 
+## Adam implementation notes
+
+**Every one of Google's eleven colours gets its own hue.** GRAPHICS II is a
+256×192 bitmap whose foreground and background are settable per 8×1 strip out of
+fifteen inks, and z88dk lays the name table out linearly so all 768 cells own
+their own eight pattern bytes and their own eight colour bytes. So this is the
+first backend that does not have to quantise: `color_chip()` is never called in
+`src/adam/`, and `ink_for_color()` maps `e->color` straight onto an ink. The
+Atari and the CoCo both collapse eleven names onto five because they run out of
+colours; the Apple has none at all.
+
+Ten of the eleven pick themselves. Graphite is the awkward one — it is
+`#616161`, a *dark* gray, and the TMS9918A's only gray is `#CCCCCC`, which
+against the white page is barely a chip. It takes black instead, which is
+further from the hex and much closer to the intent, and that frees gray for
+`COL_NONE` — so an event with no `colorId` now reads as a faint chip rather than
+as an explicitly graphite one.
+
+**The SmartKeys pay for two content rows.** The band is rows 21–23 and belongs
+to smartkeyslib, which leaves twenty-one — but the Atari and the Apple each
+spend a header row on a tab strip and the CoCo spends its whole footer on
+`1-4:VIEW`, and none of that is needed when the machine has six labelled keys
+with captions on the screen. The header is three rows instead of two, and the
+third names the calendar being shown: a persistent piece of state that changes
+what every other row means, and which until now was visible only on the settings
+page — exactly where nobody looks when a day comes back emptier than expected.
+
+**MONTH is a real grid.** Seventeen content rows hold six bands on a two-row
+pitch, seven four-column cells across, with the day number on one row and a
+density bar under it. The bar is thirty-two pixel columns and each event lights
+four, in the *true* colour of the day's leading event. The CoCo manages sixteen
+quadrant steps quantised to five colours and the Atari four monochrome ones.
+
+That last part is why `gc_daycol` is a `COL_*` and not a chip. It used to hold
+the quantised chip, which threw away the difference between Peacock and
+Blueberry at parse time — free for the three backends that quantise anyway, and
+a real loss here. A backend that wants the chip now calls `color_chip()` on it,
+which is where that decision belongs.
+
+**The mark is four hardware sprites, and four is the ceiling.** A TMS9918A shows
+at most four sprites on any scanline and silently drops the fifth — and a sprite
+occupies every line its 16-pixel box covers whether or not its colour is
+transparent. So the small mark is four 16×16 sprites stacked on one spot, in
+Google's four brand colours, carrying disjoint pixels of one ring; the large one
+is the same four laid out 2×2. A fifth colour would cost the first sprite that
+shared a line with it.
+
+Which makes ending the sprite list load-bearing. `vdp_set_mode(2)` clears VRAM,
+so slots 4 to 31 read `y=0` and sit across scanlines 1 to 16; unterminated,
+twenty-eight invisible sprites push the mark off its own budget. `logo_init()`
+writes `y=208` into slot 4 once, and `logo_hide()` writes it into slot 0.
+
+The "31" is deliberately not a sprite. The large mark spells it with two
+ordinary characters in the cells the ring encloses, the way the Atari and the
+Apple do; the small mark's interior is twelve pixels square and will not hold
+two glyphs, so it carries a hand-drawn pair in the pattern table. Either way the
+digits cost no sprite.
+
+**fujinet-lib has no clock for this bus at all.** Not `clock_get_time`, which
+the CoCo does have, and not `clock_get_tz`, which it does not — `adam/src/` has
+`fn_network/` and `fn_fuji/` and no `fn_clock/`. A calendar client with no clock
+has nothing to put in the date field of any device spec it builds.
+
+It does not need one. The firmware already answers this on the Fuji device
+rather than on a clock device: `adamFuji.cpp` dispatches `FUJI_GET_TIME`
+(`0xD2`) to `adamnet_get_time()`, which replies with
+`fujiClock::get_current_time_simple()` — and that is `SIMPLE_BINARY`'s seven
+bytes exactly, resolved through the same `[General] timezone` the GCAL adapter
+resolves its windows with. So `src/adam/clock_adam.c` is a seven-byte read, not
+a conversion, and `src/clock.c` needs no change. Only `GC_NO_CLOCK_TZ` is
+required, as on the CoCo, and the settings screen shows the clock's own reading
+for the same reason.
+
+**Column 0 stays out of the selection bar, for a fifth unrelated reason.** Here
+it is the plainest of the five: the chip's attribute byte *is* a Google colour
+and the selection bar's is dark blue, so a chip inside the bar stops being the
+event's colour. The Atari keeps its column 0 out because an inverse space is
+COLPF1 and covers the player; the Apple because MouseText has no inverse form;
+the CoCo because XOR `$40` on a semigraphics byte recolours it; the
+Intellivision because the colour-stack run has to continue past the selection.
+
+**Colour and glyphs are written by different means, and every field repaints
+both.** Glyphs go through z88dk's console, which knows how to blit a font cell
+into eight pattern bytes anywhere; colour is `vdp_vfill` straight into the
+attribute plane, one call per run. The console keeps its own notion of the
+current colour and changes it whenever anything else prints, so a field whose
+colour came from whatever `vdp_color()` was last called with is a field whose
+colour is a function of paint order. Repainting the run makes each field depend
+on its own arguments and nothing else.
+
+**Nothing paints below row 20.** `scr_clear()` clears twenty-one rows rather
+than calling `clrscr()`, which would take the SmartKeys legend with it and mean
+asking smartkeyslib to paint it again. `sk_bind()` likewise suppresses the
+repaint when the legend has not actually changed, which is what keeps a
+`smartkeys_display()` — it clears and redraws all three rows — off every
+`ui_view()`.
+
+**The time column is seven wide, and it costs the title two.** `All day` is
+seven characters and there is no shorter spelling of it that reads: the CoCo
+abbreviates to `ALLDY` because thirty-two columns of uppercase have nothing to
+spare. Two characters of title column is the cheaper price. The buffer that
+holds it is `W_TIME + 1` for exactly that reason — the label is as wide as the
+column, so the two have to move together.
+
+**The frame count is not stopped by a transfer.** The VDP raises NMI once per
+frame and z88dk keeps a chain of up to eight handlers on it, so counting frames
+costs nothing and does not displace smartkeyslib's sound handler. EOS masks
+maskable interrupts around an AdamNet transfer, but the VDP's is an NMI and
+cannot be masked — so unlike the CoCo's DriveWire and the Apple's SmartPort, a
+fetch here does not lose the wall clock. `plat_ticks()` still reads its counter
+twice and retries on a disagreement, because four bytes is not one instruction
+and `clock.c` reads a backwards step as a wrap and discards everything since.
+
+**fujinet-lib's Adam `fuji_*` calls return their booleans inverted, and this
+one is on the critical path.** Thirty-seven of the `bool`-returning entry points
+in `adam/src/fn_fuji/` return `fujiError_t` codes — so `FN_ERR_OK`, which is
+zero, comes back as `false` and `FN_ERR_IO_ERROR` as `true`. The backend was
+written to the `uint8_t` convention the `network_*` half uses and then declared
+with the `fuji_*` half's.
+
+`main.c`'s `have_fujinet()` probes with `fuji_get_adapter_config_extended()`
+precisely because it is something only a real adapter can answer, so the symptom
+is a FujiNet that is present, answering, and logging `Fuji cmd: GET ADAPTER
+CONFIG EXTENDED` while the client insists it is not there.
+`src/adam/fuji_adam.c` defines a corrected version, which leaves the library
+member unreferenced so the linker never pulls it — the same trick
+`clock_adam.c` uses for a function the archive does not carry at all. Delete it
+once upstream returns real booleans. The only other library calls this client
+makes, `fuji_read_appkey()` and `fuji_write_appkey()`, are among the correct
+ones.
+
+**With no FujiNet answering, the client sits on the splash screen.** It looks as
+though the cause is fujinet-lib wrapping each call in `while (1) { if (err ==
+ADAMNET_TIMEOUT) continue; }`, but that loop is unreachable. eoslib spins one
+level further down: `eos_write_character_device()` restarts itself internally
+until the device settles and only ever returns a settled status, so
+`ADAMNET_TIMEOUT` never reaches any caller on this bus. `ui_notfound()` is
+therefore unreachable without a presence check that does not go through
+`eos_write_character_device()` at all — which belongs in eoslib or fujinet-lib,
+not here. Every Adam FujiNet client shares this.
+
+**The chime is the machine's own.** smartkeyslib knows where the SmartWriter
+ROM keeps its sound effects, so the three notes `alarm.c` asks for are three
+SmartWriter fragments that escalate rather than three pitches — a synthesised
+triad would be the one sound on the machine that did not belong to it. It is
+also the only backend whose chime is *started* rather than played:
+`smartkeys_sound_play()` queues a fragment and the raster interrupt advances it,
+so the banner keeps flashing while the sound runs. `plat_silence()` is
+deliberately empty — EOS `$FD53` is TURN_OFF_SOUND, which shuts the engine down
+rather than the note, and the handler would go on calling `eos_play_sound()`
+into a dead engine for the rest of the run.
+
 ## Testing
 
-`make -C tests` builds the portable core natively, three times, and runs about
+`make -C tests` builds the portable core natively, four times, and runs about
 200 assertions over the date arithmetic, the whole-token colour match, the
 listing parser's column derivation, the line splitter, the agenda builder, the
 wrap and sanitize helpers, the detail ingest and every one of the alarm firing
 rules. None of it needs a 6502.
 
-Three times, because the core's fixed widths are overridable and the backends do
+Four times, because the core's fixed widths are overridable and the backends do
 override them. `hosttest` is the Atari's shape; `hosttest80` the Apple II's,
 which is the only way the reflow path is covered at all — it compiles out
-entirely without `DET_REFLOW`; and `hosttest32` the CoCo's, which is the only
-one with `MAX_EVENTS` at anything but 64 and so the only one where the
-truncation and agenda-overflow assertions mean anything.
+entirely without `DET_REFLOW`; `hosttest32` the CoCo's, which is the only one
+with `MAX_EVENTS` at anything but 64 and so the only one where the truncation
+and agenda-overflow assertions mean anything; and `hosttestadam` the Adam's,
+which is the only one that pairs a 32-column detail with the default 64 events
+and a 48-row buffer — the CoCo is 32 columns but pays for it with half the
+events and half the rows, so this is where the widest index and the narrowest
+wrap meet.
 
 One assertion differs by shape rather than passing everywhere, and it is the
 honest kind: text the adapter already wrapped to 38 columns passes through
@@ -344,21 +529,6 @@ tools/apple2-shot.sh "K_VIEW3"         # canned data, scripted keys
 REAL=1 WAIT=45 tools/apple2-shot.sh    # against a real FujiNet or fujinet-pc
 ```
 
-It drives `applen`, the ncurses frontend of the
-[FujiNet fork of AppleWin](https://github.com/FujiNetWIFI/AppleWin), which is
-not built by default — configure that tree with `-DBUILD_APPLEN=ON` and point
-`APPLEN` at the result. It shares the emulator core with `sa2`, so the
-SmartPort device relay works from it and a `REAL=1` run reaches fujinet-pc.
-
-What gets decoded is a save state, not the terminal: `applen`'s own
-`MapCharacter()` folds screen codes `$00-$1F` and `$40-$5F` onto the same
-reversed `@`-`_`, so inverse uppercase and MouseText come out identical, and
-those are the two things worth checking. Three things about driving it are easy
-to get wrong and all three are documented in `tools/apple2-run.py`:
-`--state-filename` is ignored unless the file already exists, `--headless`
-never creates the window that F11 is read through, and `set_escdelay(0)` means
-the F11 sequence has to arrive in one write.
-
 `tools/coco-shot.sh` is the third, same arguments again:
 
 ```
@@ -382,6 +552,52 @@ and `ROMPATH` at Color BASIC plus an HDB-DOS DriveWire ROM — `REAL=1` needs th
 latter, because `dwread`'s `[$D93F]` vector only exists there. xroar's Becker
 port defaults to 65504 and so does fujinet-pc-coco's boip port, so the two find
 each other with no configuration.
+
+`tools/adam-shot.sh` is the fourth, and the one that cannot work the way the
+other three do. ADAMEm has no monitor and no GDB stub, so there is nothing to
+break in. What it
+has instead is a snapshot format carrying all 16K of VRAM and an `-autosnap`
+mode that writes one at shutdown — so the recipe is to run the machine blind
+under SDL's dummy video and audio drivers, stop it after a fixed wall-clock
+time, and decode the screen out of the state it left behind:
+
+```
+tools/adam-shot.sh                     # canned data, first screen
+tools/adam-shot.sh "K_VIEW3"           # canned data, scripted keys
+REAL=1 WAIT=45 tools/adam-shot.sh      # against fujinet-pc-adam
+```
+
+The capture is therefore timing-based rather than event-based, which is the one
+respect in which this harness is weaker than the other three; `WAIT` is generous
+by default for that reason.
+
+`tools/adam-decode.py` renders the result as a PNG, because on this machine a
+picture is the honest output — the screen is a bitmap and the parts of the
+client that only exist here are not checkable from glyphs. Two text panes come
+with it: the background ink of every cell, which is what shows the header band,
+the selection bar, the chip gutter and the MONTH bars without needing to
+recognise a character; and the sprite attribute table with a per-scanline count.
+
+That second pane is the one worth reading. It is what caught the unterminated
+sprite list — twenty-eight invisible sprites sitting on scanlines 1 to 16 and
+pushing the mark past the hardware's four-per-line budget — which is invisible
+in a screenshot precisely because the emulator, unlike the hardware, draws all
+of them.
+
+It drives `applen`, the ncurses frontend of the
+[FujiNet fork of AppleWin](https://github.com/FujiNetWIFI/AppleWin), which is
+not built by default — configure that tree with `-DBUILD_APPLEN=ON` and point
+`APPLEN` at the result. It shares the emulator core with `sa2`, so the
+SmartPort device relay works from it and a `REAL=1` run reaches fujinet-pc.
+
+What gets decoded is a save state, not the terminal: `applen`'s own
+`MapCharacter()` folds screen codes `$00-$1F` and `$40-$5F` onto the same
+reversed `@`-`_`, so inverse uppercase and MouseText come out identical, and
+those are the two things worth checking. Three things about driving it are easy
+to get wrong and all three are documented in `tools/apple2-run.py`:
+`--state-filename` is ignored unless the file already exists, `--headless`
+never creates the window that F11 is read through, and `set_escdelay(0)` means
+the F11 sequence has to arrive in one write.
 
 Four things about driving it are easy to get wrong and all four are documented
 in the two scripts: `-timeout` counts *emulated* seconds, so pairing it with
@@ -423,6 +639,18 @@ src/atari/      Atari 8-bit backend
   key.s         the blocking read
   sound.c       the chime
   timer.c       frame timing
+src/adam/       Coleco Adam backend
+  platform.h    geometry, the VRAM map, the ink table, internal API
+  screen.c      the GRAPHICS II blitter and the eleven Google inks
+  logo.c        the mark, in four hardware sprites
+  ui.c          chrome, flat screens, picker, settings, SmartKey legends
+  views.c       the four views, event detail, alarm banner
+  input.c       key mapping and the SmartKey banks
+  clock_adam.c  clock_get_time(), which fujinet-lib does not ship here
+  fuji_adam.c   the adapter probe; the library's returns an inverted bool
+  sound.c       the chime, out of the SmartWriter ROM
+  timer.c       frame timing off the VDP's NMI
+  system.c      bring-up and teardown
 src/apple2enh/  Apple //e (enhanced) backend
   platform.h    geometry, MouseText codes, internal API
   screen.c      the 80-column blitter and the screen-code mapping

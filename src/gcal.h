@@ -268,10 +268,19 @@ extern char          gc_wtitle[41];     /* the adapter's own window title */
 extern unsigned char gc_agd[AGD_MAX];
 extern unsigned char gc_agd_count;
 
-/* MONTH tallies while streaming and stores no events: a 300-event month costs
-   these 64 bytes. Indexed by day of month, so [0] is never used. */
+/*
+ * MONTH tallies while streaming and stores no events: a 300-event month costs
+ * these 64 bytes. Indexed by day of month, so [0] is never used.
+ *
+ * gc_daycol holds the leading event's COL_*, not its chip. It used to hold the
+ * chip, which threw the distinction between Peacock and Blueberry away at
+ * parse time -- fine for the three backends that quantise to five colours
+ * anyway, and a real loss on the Adam, which has an ink for each of the eleven.
+ * A backend that wants the chip calls color_chip() on it, which is where that
+ * decision belongs.
+ */
 extern unsigned char gc_daycnt[32];
-extern unsigned char gc_daychip[32];
+extern unsigned char gc_daycol[32];
 
 extern struct cal    gc_cals[CAL_MAX];
 extern unsigned char gc_cal_count;

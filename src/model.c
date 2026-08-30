@@ -18,7 +18,7 @@ unsigned char gc_agd[AGD_MAX];
 unsigned char gc_agd_count;
 
 unsigned char gc_daycnt[32];
-unsigned char gc_daychip[32];
+unsigned char gc_daycol[32];
 
 struct cal    gc_cals[CAL_MAX];
 unsigned char gc_cal_count;

@@ -4,10 +4,11 @@
 # natively. The rest of src/ needs cc65 and a FujiNet, and is exercised through
 # the emulator instead -- see tools/atari-shot.sh and tools/apple2-shot.sh.
 #
-# Two binaries, because the core's fixed-width constants are overridable and
-# the backends do override them. hosttest is the Atari's shape and hosttest80
-# the Apple II's, which is the only way the reflow path gets covered at all --
-# it compiles out entirely without DET_REFLOW.
+# Four binaries, because the core's fixed-width constants are overridable and
+# every backend overrides them differently. hosttest is the Atari's shape,
+# hosttest80 the Apple II's -- which is the only way the reflow path gets
+# covered at all, since it compiles out entirely without DET_REFLOW --
+# hosttest32 the CoCo's, and hosttestadam the Adam's.
 
 CC      ?= cc
 CFLAGS  ?= -O1 -g -Wall -Wextra -Wno-unused-parameter
@@ -22,6 +23,12 @@ CFLAGS80 = -DTITLE_LEN=50 -DDET_COLS=78 -DDET_ROWS=32 -DDET_LINE_CAP=512 \
 # derived rather than the literal 128 both the others happen to get.
 CFLAGS32 = -DMAX_EVENTS=32 -DTITLE_LEN=40 -DDET_COLS=32 -DDET_ROWS=24
 
+# Keep in step with CFLAGS_EXTRA_ADAM. The Adam is the only backend that pairs
+# a 32-column detail with the default 64 events and a 48-row buffer: the CoCo
+# is 32 columns but pays for it with half the events and half the rows, so this
+# is the one shape where the widest index and the narrowest wrap meet.
+CFLAGSADAM = -DTITLE_LEN=40 -DDET_COLS=32 -DDET_ROWS=48
+
 SRC = hosttest.c \
       ../src/wrap.c \
       ../src/sanitize.c \
@@ -34,10 +41,11 @@ SRC = hosttest.c \
       ../src/alarm.c \
       ../src/model.c
 
-all: hosttest hosttest80 hosttest32
+all: hosttest hosttest80 hosttest32 hosttestadam
 	./hosttest
 	./hosttest80
 	./hosttest32
+	./hosttestadam
 
 hosttest: $(SRC) ../src/gcal.h
 	$(CC) $(CFLAGS) -o $@ $(SRC)
@@ -48,7 +56,10 @@ hosttest80: $(SRC) ../src/gcal.h
 hosttest32: $(SRC) ../src/gcal.h
 	$(CC) $(CFLAGS) $(CFLAGS32) -o $@ $(SRC)
 
+hosttestadam: $(SRC) ../src/gcal.h
+	$(CC) $(CFLAGS) $(CFLAGSADAM) -o $@ $(SRC)
+
 clean:
-	rm -f hosttest hosttest80 hosttest32
+	rm -f hosttest hosttest80 hosttest32 hosttestadam
 
 .PHONY: all clean

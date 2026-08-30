@@ -1,6 +1,5 @@
 PRODUCT = gcal
 PLATFORMS += adam
-PLATFORMS += adam_cpm
 PLATFORMS += apple2
 PLATFORMS += apple2enh
 PLATFORMS += atari
@@ -8,6 +7,11 @@ PLATFORMS += c64
 PLATFORMS += coco
 PLATFORMS += msdos
 PLATFORMS += msxrom
+
+# adam_cpm is deliberately absent. PLATFORM_COMBOS below expands it to src/adam/
+# as well as src/adam_cpm/, so listing it would compile this backend's EOS and
+# SmartKeys calls into a CP/M binary that links neither library. The combo stays
+# because it is also what points fnlib.py at the adam archive.
 
 # You can run 'make <platform>' to build for a specific platform,
 # or 'make <platform>/<target>' for a platform-specific target.
@@ -27,6 +31,40 @@ SRC_DIRS = src src/%PLATFORM%
 # - empty which will use whatever is the latest
 # - undefined, no fujinet-lib will be used
 FUJINET_LIB =
+
+# The Adam runs at 32x24 on the TMS9918A's GRAPHICS II page, and the SmartKeys
+# band owns the bottom three rows -- so the screen is 32 wide like the CoCo's
+# and 21 rows tall, which is five more than the CoCo has and the most this
+# program has ever had.
+#
+# LIST_ROWS 14 is rows 4-17; 18-19 are the panel that spells the selection out
+# and 20 is the status row. DET_WIN 16 x DET_ROWS 48 is three pages. MAX_EVENTS
+# and GC_RXBUF are both left at the portable defaults, which no other 32-column
+# build can afford: this target links at $0000 in all-RAM mode and the ceiling
+# is the boot block at $C800, so 51K of address space against the CoCo's 27K.
+# The link currently ends its BSS at $B8D3, which is 3.8K of headroom -- check
+# __BSS_END_tail in r2r/adam/gcal.map against $C800 if you raise either.
+#
+# TITLE_LEN is 40 rather than the 23 the list column shows, for the same reason
+# as on the CoCo: the panel is two rows of 32, and "09:00-10:00  " leaves 51 of
+# those for the title. Check r2r/adam/gcal.map against the $C800 ceiling if you
+# move it.
+CFLAGS_EXTRA_ADAM  = -DBUILD_ADAM -Os
+CFLAGS_EXTRA_ADAM += -DLIST_ROWS=14 -DPICK_ROWS=12 -DDET_WIN=16
+CFLAGS_EXTRA_ADAM += -DDET_COLS=32 -DDET_ROWS=48 -DTITLE_LEN=40
+
+# fujinet-lib has no fn_clock for this bus at all -- not clock_get_time, which
+# the CoCo does have, and not clock_get_tz, which it does not. src/adam/
+# clock_adam.c supplies the first by asking the Fuji device directly; there is
+# no equivalent for the second, so the settings screen shows the clock's own
+# reading instead. See src/clock.c and src/adam/ui.c.
+CFLAGS_EXTRA_ADAM += -DGC_NO_CLOCK_TZ
+
+CFLAGS_EXTRA_ADAM += $(ADAM_SHOT_FLAGS)
+
+# -m keeps the map file, which is the only way to see how close the link is to
+# the $C800 boot block. z88dk writes it next to the executable.
+LDFLAGS_EXTRA_ADAM = -m
 
 # The Atari build carves 2K off the top of memory so we can place a 1K-aligned
 # player/missile graphics buffer above the C stack. See src/atari/pmg.c.

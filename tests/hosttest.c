@@ -347,8 +347,8 @@ static void test_index_month(void)
 
     /* The adapter sorts by start time, so the first row for a day is that
        day's leading event and its colour is the one worth keeping. */
-    eq_int("day 28 chip is the earliest", gc_daychip[28], CHIP_BLUE);
-    eq_int("day 29 chip", gc_daychip[29], CHIP_YELLOW);
+    eq_int("day 28 colour is the earliest", gc_daycol[28], COL_PEACOCK);
+    eq_int("day 29 colour", gc_daycol[29], COL_BANANA);
 }
 
 static void test_index_edges(void)

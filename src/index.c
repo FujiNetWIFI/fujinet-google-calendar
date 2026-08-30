@@ -56,7 +56,7 @@ void idx_reset(unsigned char v)
     if (v == VIEW_MONTH) {
         for (i = 0; i < 32; i++) {
             gc_daycnt[i] = 0;
-            gc_daychip[i] = CHIP_BLUE;
+            gc_daycol[i] = COL_NONE;
         }
     }
 }
@@ -206,8 +206,7 @@ static void tally_month(const char *p, unsigned char len)
         return;
 
     if (gc_daycnt[d] == 0)
-        gc_daychip[d] = color_chip(color_match(p + catc,
-                                               (unsigned char) (len - catc)));
+        gc_daycol[d] = color_match(p + catc, (unsigned char) (len - catc));
     if (gc_daycnt[d] < 255)
         gc_daycnt[d]++;
 

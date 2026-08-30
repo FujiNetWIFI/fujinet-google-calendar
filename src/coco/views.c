@@ -455,7 +455,7 @@ static void month_geom(void)
  * The Atari draws four inverse spaces here and the Apple eight, both
  * monochrome, because neither can give a single cell its own hue. This one
  * can, so the bar says both how busy the day is and what kind of thing is on
- * it -- which is the whole reason gc_daychip[] is tallied.
+ * it -- which is the whole reason gc_daycol[] is tallied.
  */
 static void month_cell(unsigned char band, unsigned char dow, unsigned char day,
                        unsigned char sel)
@@ -493,7 +493,7 @@ static void month_cell(unsigned char band, unsigned char dow, unsigned char day,
 
     /* The hue the chip would have been drawn in, taken back out of the byte
        rather than kept in a second table. */
-    hue = (unsigned char) ((chip_sg(gc_daychip[day]) >> 4) & 7);
+    hue = (unsigned char) ((chip_sg(color_chip(gc_daycol[day])) >> 4) & 7);
 
     for (i = 0; i < MO_CELL_W; i++) {
         mask = 0;
