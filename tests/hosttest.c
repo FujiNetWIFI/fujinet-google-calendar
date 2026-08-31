@@ -971,6 +971,61 @@ static void test_detail_reflow(void)
 }
 #endif /* DET_REFLOW */
 
+#if defined(GC_RT_COLS) && defined(DET_REFLOW)
+/*
+ * The runtime wrap width -- the hook only the MS-DOS shape builds, and the
+ * only place in any shape where the wrap is narrower than the storage. The
+ * fixture is test_detail_reflow's 80-column paragraph, so the join itself is
+ * already proven above; what this asserts is the hook's own contract: the
+ * same buffer wraps clean at 38, the words land where a 38-column wrap puts
+ * them, and widening back to 78 needs fewer rows of the identical text.
+ * (DET_REFLOW is in the guard because the expected row counts assume the
+ * three wire lines join first -- the two flags travel together in
+ * CFLAGSDOS.)
+ */
+static void test_detail_rt_cols(void)
+{
+    unsigned int i;
+
+    puts("detail: runtime wrap width");
+
+    gc_wrap_cols = 38;
+    detail_reset();
+    ingest("Standup\x9B""Fri 28 Aug 2026 09:00-10:00\x9B");
+    ingest("aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll mmmm\x9B");
+    ingest("nnnn oooo pppp qqqq rrrr ssss tttt uuuu vvvv wwww xxxx yyyy zzzz\x9B");
+    ingest("tail.\x9B");
+    detail_finish();
+
+    eq_int("narrow wrap rows", gc_det_rows, 4);
+    eq_str("narrow wrap row0", gc_det[0],
+           "aaaa bbbb cccc dddd eeee ffff gggg");
+
+    checks++;
+    for (i = 0; i < gc_det_rows; i++) {
+        if (strlen(gc_det[i]) > 38) {
+            failures++;
+            printf("  FAIL narrow wrap: row %u is %u wide, max 38\n",
+                   i, (unsigned) strlen(gc_det[i]));
+            break;
+        }
+    }
+
+    gc_wrap_cols = 78;
+    detail_reset();
+    ingest("Standup\x9B""Fri 28 Aug 2026 09:00-10:00\x9B");
+    ingest("aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll mmmm\x9B");
+    ingest("nnnn oooo pppp qqqq rrrr ssss tttt uuuu vvvv wwww xxxx yyyy zzzz\x9B");
+    ingest("tail.\x9B");
+    detail_finish();
+
+    eq_int("wide wrap rows", gc_det_rows, 2);
+    rows_fit("wide wrap");
+
+    gc_wrap_cols = DET_COLS;
+}
+#endif /* GC_RT_COLS && DET_REFLOW */
+
 /* ------------------------------------------------------------------ */
 
 int main(void)
@@ -991,6 +1046,9 @@ int main(void)
     test_detail();
 #ifdef DET_REFLOW
     test_detail_reflow();
+#endif
+#if defined(GC_RT_COLS) && defined(DET_REFLOW)
+    test_detail_rt_cols();
 #endif
 
     printf("\n%d checks, %d failures\n", checks, failures);

@@ -29,6 +29,12 @@ char          gc_det[DET_ROWS][DET_STRIDE];
 unsigned int  gc_det_rows;
 unsigned char gc_det_trunc;
 
+#ifdef GC_RT_COLS
+/* The runtime wrap width (see gcal.h). It lives here beside the buffer it
+   must never outgrow; the backend narrows it in plat_init(). */
+unsigned char gc_wrap_cols = DET_COLS;
+#endif
+
 static char          linebuf[DET_LINE_CAP + 1];
 static unsigned int  line_len;
 static unsigned char pending_lf;        /* saw CR, swallow a following LF */
@@ -101,7 +107,7 @@ static void flush_line(void)
 
     avail = DET_ROWS - gc_det_rows;
     gc_det_rows += wrap_text(linebuf, gc_det[gc_det_rows],
-                             avail, DET_COLS, DET_STRIDE);
+                             avail, GC_WRAP_COLS, DET_STRIDE);
 
     if (gc_det_rows >= DET_ROWS)
         gc_det_trunc = 1;

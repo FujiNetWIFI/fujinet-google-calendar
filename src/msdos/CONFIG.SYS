@@ -1,0 +1,18 @@
+; FujiNet MS-DOS drivers
+;
+; FUJI_PORT  - COM port: 1-4 - Uses default hardcoded address & irq, OR
+;                        Hex I/O address, followed by irq (e.g. FUJI_PORT=0x2f8,11)
+;              Default: 1 (COM1)
+; FUJI_BPS   - Baud rate (9600, 19200, 115200, etc.)
+;              Default: 115200
+; NOTIME     - Do not set DOS clock from FujiNet
+;
+; This copy lives in the project rather than being taken verbatim from the
+; fujinet-msdos clone the way the gmail disk's is, because of the one line
+; that differs: FUJI_PORT=2. The 86Box IBM 5160 this disk is tested on wires
+; its FujiNet (BoIP) to serial2 -- COM1 is the virtual console -- and the
+; PCjr needs COM2 as well, its internal UART sitting at the COM2 address.
+; On a machine with the FujiNet cabled to COM1, change it back.
+
+DEVICE=FUJINET.SYS FUJI_PORT=2 FUJI_BPS=115200
+DEVICE=FUJIPRN.SYS

@@ -4,11 +4,12 @@
 # natively. The rest of src/ needs cc65 and a FujiNet, and is exercised through
 # the emulator instead -- see tools/atari-shot.sh and tools/apple2-shot.sh.
 #
-# Four binaries, because the core's fixed-width constants are overridable and
+# Five binaries, because the core's fixed-width constants are overridable and
 # every backend overrides them differently. hosttest is the Atari's shape,
 # hosttest80 the Apple II's -- which is the only way the reflow path gets
 # covered at all, since it compiles out entirely without DET_REFLOW --
-# hosttest32 the CoCo's, and hosttestadam the Adam's.
+# hosttest32 the CoCo's, hosttestadam the Adam's, and hosttestdos the
+# MS-DOS one, the only shape where the wrap width is a runtime variable.
 
 CC      ?= cc
 CFLAGS  ?= -O1 -g -Wall -Wextra -Wno-unused-parameter
@@ -29,6 +30,14 @@ CFLAGS32 = -DMAX_EVENTS=32 -DTITLE_LEN=40 -DDET_COLS=32 -DDET_ROWS=24
 # is the one shape where the widest index and the narrowest wrap meet.
 CFLAGSADAM = -DTITLE_LEN=40 -DDET_COLS=32 -DDET_ROWS=48
 
+# Keep in step with CFLAGS_EXTRA_MSDOS. The one shape that builds the
+# GC_RT_COLS hook: DET_COLS goes on sizing the 79-byte stride while
+# gc_wrap_cols carries the width the text is actually wrapped to, so this is
+# the only binary anywhere with a wrap narrower than its storage -- and
+# therefore the only coverage the hook gets at all.
+CFLAGSDOS = -DGC_RT_COLS -DTITLE_LEN=50 -DDET_COLS=78 -DDET_ROWS=48 \
+            -DDET_LINE_CAP=512 -DDET_REFLOW -DGC_KEEP_CAT
+
 SRC = hosttest.c \
       ../src/wrap.c \
       ../src/sanitize.c \
@@ -41,11 +50,12 @@ SRC = hosttest.c \
       ../src/alarm.c \
       ../src/model.c
 
-all: hosttest hosttest80 hosttest32 hosttestadam
+all: hosttest hosttest80 hosttest32 hosttestadam hosttestdos
 	./hosttest
 	./hosttest80
 	./hosttest32
 	./hosttestadam
+	./hosttestdos
 
 hosttest: $(SRC) ../src/gcal.h
 	$(CC) $(CFLAGS) -o $@ $(SRC)
@@ -59,7 +69,10 @@ hosttest32: $(SRC) ../src/gcal.h
 hosttestadam: $(SRC) ../src/gcal.h
 	$(CC) $(CFLAGS) $(CFLAGSADAM) -o $@ $(SRC)
 
+hosttestdos: $(SRC) ../src/gcal.h
+	$(CC) $(CFLAGS) $(CFLAGSDOS) -o $@ $(SRC)
+
 clean:
-	rm -f hosttest hosttest80 hosttest32 hosttestadam
+	rm -f hosttest hosttest80 hosttest32 hosttestadam hosttestdos
 
 .PHONY: all clean

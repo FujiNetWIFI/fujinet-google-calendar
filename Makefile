@@ -189,6 +189,61 @@ LDFLAGS_EXTRA_COCO += --no-relocate -i
 # sensitive -- it gives ?UL ERROR on stock Disk BASIC 1.1 -- and one typed line
 # is a smaller price than a second binary that only works on some ROMs.
 
+# The MS-DOS build (Open Watcom wcc, 8086, small model) is the one target
+# that does not know its own width until it is running: a PC inherits
+# whatever text mode it booted in, 40 columns in modes 0/1, 80 in 2/3, and
+# the MDA's mode 7. So the width knobs here size *storage* for the widest
+# case and GC_RT_COLS makes the wrap width a runtime variable -- gc_det
+# stays 48 rows of 79-byte stride while gc_wrap_cols wraps at 38 or 78.
+# Wrapping narrower than the stride is safe; the reverse would be an
+# overrun, which is why DET_STRIDE itself stays derived. Rows are still
+# compile-time -- every mode this backend runs in is 25 of them, one more
+# than the Apple, spent on a two-row detail panel (LIST_ROWS 18 + panel
+# rows 22-23), a taller detail window and a month summary with a blank
+# above it. Keep the shape knobs in step with CFLAGSDOS in tests/Makefile.
+#
+# DET_ROWS is 48 rather than the Apple's 32 because the same description
+# needs roughly twice the rows when the runtime wrap is 38 -- 48x38 is the
+# Atari's capacity, 48x78 is three-plus pages at 80. DET_REFLOW is on
+# because it is required at 78 and harmless at 38. GC_KEEP_CAT is stored
+# unconditionally (960 bytes, cheap here) and *rendered* only at 80
+# columns, where ui_geom() gives it a column. GC_RXBUF is 1024 because
+# every network_read is a whole INT F5 / RS-232 round trip.
+#
+# -os because wcc's default is NO optimisation at all. And wcc cannot carry
+# a comma through -D -- everything after one parses as another source file
+# (E1139) -- which is why tools/msdos-shot.sh sends scripted keys as
+# GC_FAKE_KEYS_STR, a string with no commas in it.
+#
+# The budget is DGROUP -- one 64K group for all statics plus the stack --
+# not address space. The arithmetic: gc_index 64 x 80 = 5,120 with the
+# category kept, gc_det 48 x 79 = 3,792, rxbuf 1,024, gc_cals 720, agenda
+# and assorted buffers ~1,000; call it 12K of ours plus the Watcom RTL and
+# fujinet-lib statics and the 4K stack, comfortably under 20K of the 64K.
+# Check DGROUP in r2r/msdos/gcal.map before raising MAX_EVENTS or DET_ROWS,
+# and check the -DGC_FAKE_DATA build too -- it links the canned wire data
+# alongside the real transport and runs out first.
+CFLAGS_EXTRA_MSDOS  = -os -DGC_RT_COLS
+CFLAGS_EXTRA_MSDOS += -DTITLE_LEN=50 -DDET_COLS=78 -DDET_ROWS=48
+CFLAGS_EXTRA_MSDOS += -DDET_LINE_CAP=512 -DDET_REFLOW -DGC_KEEP_CAT
+CFLAGS_EXTRA_MSDOS += -DLIST_ROWS=18 -DPICK_ROWS=14 -DDET_WIN=20
+CFLAGS_EXTRA_MSDOS += -DGC_RXBUF=1024
+
+# tools/msdos-shot.sh appends -DGC_FAKE_DATA / -DGC_SHOT / -DGC_FAKE_KEYS_STR
+# through here -- this variable carries every screen-shape knob above and a
+# command-line assignment would replace the lot.
+CFLAGS_EXTRA_MSDOS += $(MSDOS_SHOT_FLAGS)
+
+LDFLAGS_EXTRA_MSDOS  = OPTION map=r2r/msdos/gcal.map
+LDFLAGS_EXTRA_MSDOS += OPTION stack=4096
+
+# Build with `defoogi make msdos`: wcc lives only in the defoogi container.
+# Leave FUJINET_LIB empty (the default above) rather than pointing it at a
+# host checkout -- the container mounts the project directory and nothing
+# else, so an absolute host path is invisible inside it, and the empty
+# variable makes fnlib.py download the msdos release archive into the
+# project's own _cache/ instead.
+
 # HIRESTXT_LIB can be
 # - a version number such as 0.5.0.2
 # - a directory which contains the built library
@@ -214,3 +269,28 @@ include mekkogx/toplevel-rules.mk
 #   coco/r2r:: coco/custom-step2
 # or
 #   apple2/disk: apple2/custom-step1 apple2/custom-step2
+
+# The MS-DOS disk is a bootless 360K FAT image (mformat lays no system
+# tracks -- SYS A: it from a DOS disk) carrying GCAL.EXE and the FujiNet
+# driver set. The drivers are built from the fujinet-msdos repo as named
+# parts rather than through that repo's own `disk` target, because fmall
+# and freset grew nasm dependencies and defoogi ships wasm, not nasm. The
+# clone and sub-make run inside the same defoogi invocation as the build --
+# the container has both the toolchain and the network.
+#
+# CONFIG.SYS is this project's own (src/msdos/CONFIG.SYS) rather than the
+# clone's verbatim copy the gmail disk uses, for one line: FUJI_PORT=2. See
+# the comment in that file. mcopy -t converts the two text files to CRLF;
+# AUTOEXEC.BAT goes last so nothing shadows starting GCAL.
+FUJINET_MSDOS_REPO = https://github.com/FujiNetWIFI/fujinet-msdos.git
+FUJINET_MSDOS_CACHE = $(CACHE_DIR)/fujinet-msdos
+FN_MSDOS_PARTS = sys/fujinet.sys printer/fujiprn.sys fconfig/fconfig.com
+
+msdos/disk-post::
+	@if [ ! -d $(FUJINET_MSDOS_CACHE) ]; then \
+	  git clone $(FUJINET_MSDOS_REPO) $(FUJINET_MSDOS_CACHE); \
+	fi
+	$(MAKE) -C $(FUJINET_MSDOS_CACHE) $(FN_MSDOS_PARTS)
+	mcopy -o -i $(DISK) $(addprefix $(FUJINET_MSDOS_CACHE)/,$(FN_MSDOS_PARTS)) '::/'
+	mcopy -t -o -i $(DISK) src/msdos/CONFIG.SYS '::/CONFIG.SYS'
+	mcopy -t -o -i $(DISK) src/msdos/AUTOEXEC.BAT '::/AUTOEXEC.BAT'

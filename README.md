@@ -7,8 +7,8 @@ Two implementations live here:
 
 - `intv/` — the original, in IntyBASIC for the Intellivision.
 - `src/` — a C port. The portable core is in `src/`, the machine-specific half
-  in `src/<platform>/`. Atari 8-bit, Apple II, CoCo and Coleco Adam backends
-  exist so far.
+  in `src/<platform>/`. Atari 8-bit, Apple II, CoCo, Coleco Adam and MS-DOS
+  backends exist so far.
 
 Day, week, month and agenda views; an event detail screen; a calendar picker; a
 settings page; and alarms synthesised on the client, because the adapter's
@@ -21,13 +21,17 @@ defoogi make atari          # -> r2r/atari/gcal.com and r2r/atari/gcal.atr
 defoogi make apple2enh      # -> r2r/apple2enh/gcal.a2s and gcal.po
 defoogi make coco           # -> r2r/coco/gcal.bin and gcal.dsk
 defoogi make adam           # -> r2r/adam/gcal.ddp and gcal_BOOTSTRAP.bin
+defoogi make msdos          # -> r2r/msdos/gcal.exe and gcal.img
 make -C tests               # host-native tests of the portable core
 ```
 
-[defoogi](https://github.com/FozzTexx/defoogi) carries cl65, cmoc, zcc,
+[defoogi](https://github.com/FozzTexx/defoogi) carries cl65, cmoc, zcc, wcc,
 `eos.lib`, `smartkeys.lib`, `dir2atr`, `atr`, `ac` and `decb`, so no host
 toolchain is needed; plain `make atari` works too if you have them. fujinet-lib
-is fetched into `_cache/` automatically.
+is fetched into `_cache/` automatically. Leave `FUJINET_LIB` empty for the
+MS-DOS build rather than pointing it at a host checkout: defoogi mounts the
+project directory and nothing else, so an absolute host path is invisible
+inside the container.
 
 The Apple II target is `apple2enh` — an enhanced //e with 80-column hardware.
 `apple2` is not a build of this: it is the unenhanced machine, with no
@@ -473,24 +477,162 @@ deliberately empty — EOS `$FD53` is TURN_OFF_SOUND, which shuts the engine dow
 rather than the note, and the handler would go on calling `eos_play_sound()`
 into a dead engine for the rest of the run.
 
+## MS-DOS implementation notes
+
+Open Watcom `wcc`, 8086 code, small model, BIOS text modes only — which is
+what lets one `GCAL.EXE` run on anything from a PCjr to a 486, on a CGA, an
+MDA, a Hercules or anything later that emulates them.
+
+**The screen width is not known until the program is running.** Every other
+backend compiles its geometry in; a PC inherits whatever text mode it was
+started in — 40×25 in modes 0/1, 80×25 in 2/3, the MDA's mode 7. So
+`scr_cols` and `scr_wide` are variables probed in `plat_init()`, `ui_geom()`
+fills in the column layout — the Apple's at 80 with the category column, the
+Atari's at 40 without — and the wrap width goes through the `GC_RT_COLS` hook
+in `gcal.h`: `DET_COLS` stays 78 and goes on sizing `gc_det`'s stride, while
+`gc_wrap_cols` carries the 38 or 78 the text is actually wrapped to. Wrapping
+narrower than the stride is safe; the reverse would be an overrun, which is
+why `DET_STRIDE` stays derived and non-overridable. Rows are still
+compile-time — every mode here is 25 of them, one more than the Apple, spent
+on a two-row detail panel, a taller detail window and a month summary row
+with a blank above it. `/40` and `/80` on the command line force a width;
+EGA/VGA 43- and 50-row modes are put back into mode 3 rather than teaching
+the views a third geometry.
+
+**The adapter, not the mode, decides where the text page is.** Bits 4–5 of
+the BDA equipment word are `11` for a monochrome adapter, and that is the
+authoritative test: an MDA or Hercules machine is not necessarily *in* mode 7
+when the program starts — dosbox-x's hercules machine boots reporting mode
+3 — but its page is at `B000` regardless, and a probe that trusted the mode
+wrote 4,000 bytes into an address no hardware was decoding.
+`MACHINE=hercules tools/msdos-shot.sh` is that bug's regression test.
+
+**Painters name a role, not a byte.** The Adam's attribute roles, grown to
+eleven and resolved through one of three tables picked at init: colour,
+black-and-white (modes 0/2, or `/MONO` for the LCD and composite screens that
+render colour as mud), and MDA. Colour is Google Calendar's own reading
+quantised to CGA — black text on a light-grey page under blue chrome bands —
+rather than the gmail client's blue desktop. The MDA table is where mode 7
+earns its own column: reverse video for the bars and the selection, intensity
+for the active tab and emphasis, and a real underline — the one attribute no
+other adapter in this repo has — under the detail title, the panel headings,
+and today's day number and column head (`0x09`, bright *and* underlined).
+
+**Eleven inks, no quantisation.** In colour mode `ink_attr()` gives each of
+Google's eleven colour names its own CGA foreground on the page — the Adam's
+`ink_for_color()` arrangement, affordable for the second time. Two trades
+worth naming: Tangerine gets brown, the only orange CGA has, and Graphite
+gets true black, visible because the page behind it is light grey. The chip
+gutter, the WEEK strip and the MONTH density bars all draw from it, so the
+month grid says *what kind* of busy as well as how much. The two monochrome
+tables fall back to `color_chip()`'s five-way quantisation rendered as a
+CP437 density ramp — `█ ▓ ▒ ░ ■` — legended on the settings screen, which in
+colour lists all eleven names against their inks instead.
+
+**The mark is cells, not sprites.** A white page with `31` on it, ringed in
+the four brand colours as CP437 full blocks — the gmail client's row-table
+technique with one extension: the page cells are *painted* rather than
+skipped, because on the monochrome tables the page has to be laid down as
+reverse video or the mark would be a ring around a hole. Bright ring, reverse
+page, dark digits — the Apple's one-bit rendering, arrived at from the other
+direction.
+
+**Cells are written straight into the text page.** INT 10h writes one cell
+per two interrupts and a full repaint is 4,000 of them, visible on a 4.77 MHz
+8088. The one machine direct writes upset is the genuine IBM CGA, which snows
+in 80-column text; `/SNOW` gates every write on the start of a horizontal
+retrace for that card — a switch rather than a heuristic, because there is no
+reliable way to detect a true CGA and everything else would pay the wait for
+a fault it does not have.
+
+**One clock, 18.2 ticks a second.** The BDA tick count at `0040:006C` is the
+PC's RTCLOK: it advances in the background whatever the program is doing, so
+the wall clock stays honest across every blocking screen with nobody pumping
+a counter the way the Apple backend must. `plat_fps()` says 18 — calling it
+60 would run the clock at a third speed — and the ~1% left over is absorbed
+by the half-hour resync. The consequence is that `alarm.c`'s frame constants,
+tuned at 60, run the banner ~13 seconds and the chime ~1.3; acceptable for an
+alarm, and preferred over a second timing path, because the MDA has no
+vertical-retrace bit to build one from. The chime itself is the 8253's
+channel 2 gated through port `61h` — no CPU in the loop, which is why
+`plat_silence()` genuinely matters here and `plat_shutdown()` calls it too.
+
+**Everything on the bus goes through `INT F5` into FUJINET.SYS, and
+fujinet-lib 4.11.2 gets three parts of that wrong.** Each fix is a file in
+`src/msdos/` that shadows the archive member — the `src/adam/` pattern — and
+each says in its header when it can be deleted:
+
+- `net_msdos.c` — the driver speaks the FujiBusPacket protocol, in which `DH`
+  describes how the aux bytes become typed parameters, and the library always
+  sends `DH=0`: no parameters. Calls that need none work by luck; an open
+  arrives as `Insufficient open paramaters: 0` in the firmware log and a NAK
+  on the wire. `network_open()` gets its own bus entry with `DH=2` and sends
+  the devicespec at its real length (the firmware takes the payload into a
+  `std::string` verbatim, stack garbage and all), `network_read()` gets
+  `DH=5`, and `network_error()` stops returning success from a failure path.
+- `fuji_msdos.c` — guards the first bus call with `_dos_getvect(0xF5)`,
+  because without FUJINET.SYS resident the vector is null and `int86x`
+  through it jumps to `0000:0000` — a crash, not an error return; that check
+  is what makes `ui_notfound()` reachable enough to name CONFIG.SYS. It also
+  rewrites both appkey calls: the archive's treat the bus reply as a boolean,
+  and `'E'` and `'N'` are as nonzero as `'C'` — so a *missing* key, which is
+  every first run, read back as 66 bytes of garbage adopted as settings. (The
+  read's failure path also assigned `count = 0` to the pointer rather than
+  the count.)
+- `clock_msdos.c` — the archive has no `fn_clock` at all on this bus.
+  `clock_get_time()` is a seven-byte `'T'` read from device `0x45`, the atari
+  fn_clock's own command table; `clock_get_tz()` is the `'L'` length read and
+  the `'G'` string read from the same device. If a live run shows the RS-232
+  firmware not answering `'L'`/`'G'`, delete the tz shim and add
+  `-DGC_NO_CLOCK_TZ` — the CoCo's gate; `ui_setup` already carries the
+  clock-reading fallback under that flag.
+
+**A failed open reports its real error.** The portable `open_error()` was
+written for the Atari bus, where the SIO layer leaves the protocol's status
+byte in `fn_network_error`. The INT F5 layer never writes it, so every failed
+open — including the 212 *authorize Google in the Web UI* a first-time user
+is guaranteed to hit — would have reported as a timeout. The `__MSDOS__`
+branch re-probes the still-addressable channel once and reports what it says,
+restoring the open's own device code afterwards.
+
+**The disk is a driver disk without DOS.** `gcal.img` carries `GCAL.EXE`,
+`FUJINET.SYS`, `FUJIPRN.SYS`, `FCONFIG.COM`, a `CONFIG.SYS` and an
+`AUTOEXEC.BAT`; `mformat` lays no system tracks, so `SYS A:` it from a DOS
+disk or copy the files onto one. The driver parts are built from the
+fujinet-msdos repo as named targets inside the same defoogi run (its own
+`disk` target grew nasm dependencies, and defoogi ships `wasm`). The
+`CONFIG.SYS` is this project's own rather than the clone's verbatim copy, for
+one line: `FUJI_PORT=2`, because the 86Box IBM 5160 this disk is tested on
+wires its FujiNet (BoIP) to serial 2 — COM1 is the virtual console — and the
+PCjr needs COM2 as well, its internal UART sitting at the COM2 address. On a
+machine with the FujiNet cabled to COM1, change it back.
+
+**The budget is DGROUP, not address space.** One 64K group holds every
+static and the 4K stack; the link map (`r2r/msdos/gcal.map`, kept by
+`OPTION map=`) puts it at about 19K, and the `-DGC_FAKE_DATA` build — which
+links the canned wire data alongside the real transport — at just under 20K.
+Check it there before raising `MAX_EVENTS` or `DET_ROWS`.
+
 ## Testing
 
-`make -C tests` builds the portable core natively, four times, and runs about
+`make -C tests` builds the portable core natively, five times, and runs about
 200 assertions over the date arithmetic, the whole-token colour match, the
 listing parser's column derivation, the line splitter, the agenda builder, the
 wrap and sanitize helpers, the detail ingest and every one of the alarm firing
 rules. None of it needs a 6502.
 
-Four times, because the core's fixed widths are overridable and the backends do
+Five times, because the core's fixed widths are overridable and the backends do
 override them. `hosttest` is the Atari's shape; `hosttest80` the Apple II's,
 which is the only way the reflow path is covered at all — it compiles out
 entirely without `DET_REFLOW`; `hosttest32` the CoCo's, which is the only one
 with `MAX_EVENTS` at anything but 64 and so the only one where the truncation
-and agenda-overflow assertions mean anything; and `hosttestadam` the Adam's,
+and agenda-overflow assertions mean anything; `hosttestadam` the Adam's,
 which is the only one that pairs a 32-column detail with the default 64 events
 and a 48-row buffer — the CoCo is 32 columns but pays for it with half the
 events and half the rows, so this is where the widest index and the narrowest
-wrap meet.
+wrap meet; and `hosttestdos` the MS-DOS shape, the only one where the wrap
+width is a runtime variable — it drives the same buffer at 38 and then 78,
+which is the only coverage the `GC_RT_COLS` hook gets at all.
 
 One assertion differs by shape rather than passing everywhere, and it is the
 honest kind: text the adapter already wrapped to 38 columns passes through
@@ -608,6 +750,37 @@ runs off the emulator thread, so the first `?` has to be retried; and `Z0`
 breakpoints are accepted, answer `OK`, and never fire — which is why the
 capture polls the PC instead.
 
+`tools/msdos-shot.sh` is the fifth harness and by far the easiest, because a
+DOS program needs no debugger to give its screen up: the `GC_SHOT` hook in
+`src/msdos/input.c` dumps the program's own text page to `SCREEN.BIN` exactly
+where it would otherwise block for a key, and dosbox-x's only job is to
+exist. The view loop polls, but under `GC_FAKE_DATA` `plat_getkey_poll()`
+delegates to the blocking read once the scripted keys are spent, so every
+screen funnels into the same catch point; only the alarm banner cannot be
+captured this way, because it needs the loop to keep turning.
+
+```
+tools/msdos-shot.sh                          # canned data, DAY view
+tools/msdos-shot.sh "K_VIEW3"                # canned data, scripted keys
+MODE=40 tools/msdos-shot.sh                  # 40 columns    (gcal /40)
+MODE=mono tools/msdos-shot.sh                # the B&W table (gcal /mono)
+MACHINE=hercules tools/msdos-shot.sh         # the MDA path, mode 7
+MACHINE=pcjr tools/msdos-shot.sh             # the PCjr's BIOS
+```
+
+`MACHINE=hercules` is the capture that earns its keep: dosbox-x's hercules
+machine boots claiming mode 3, so it is the regression test for the
+equipment-word probe. `tools/msdos-decode.py --attrs` prints the attribute
+bytes alongside the glyphs, which is the only way to see the `0x70` bars, the
+colour inks, the `0x01` underline under the detail title and the `0x09`
+bright underline on today — none of them are visible in the text. The capture
+header carries the BIOS mode the probe saw, because a capture that cannot say
+"that was really mode 7" cannot check the MDA path at all.
+
+The script clobbers the msdos objects before and after itself:
+`MSDOS_SHOT_FLAGS` changes every object and make cannot see a flag change, so
+run `defoogi make msdos` afterwards to get the shipping binary back.
+
 ## Layout
 
 ```
@@ -672,7 +845,21 @@ src/coco/       Tandy Color Computer backend
   timer.c       the 16-bit TIMER, extended to 32 bits
   sound.c       the chime
   include/      a <string.h> shim, because CMOC ships none
-tests/          host-native tests, built at all three screen shapes
+src/msdos/      MS-DOS backend (Open Watcom, 8086, small model)
+  platform.h    runtime geometry, the eleven attribute roles, internal API
+  screen.c      the video probe, the three attribute tables, the blitter
+  ui.c          chrome, flat screens, picker, settings, ui_geom()
+  views.c       the four views, event detail, alarm banner
+  logo.c        the mark, page and ring in CP437 cells
+  input.c       INT 16h key mapping, the poll, the GC_SHOT hook
+  timer.c       frame timing off the BIOS tick at 0040:006C
+  sound.c       the chime, on the 8253's channel 2
+  clock_msdos.c clock_get_time()/clock_get_tz(), which fujinet-lib lacks here
+  fuji_msdos.c  the INT F5 vector guard and the corrected appkey calls
+  net_msdos.c   the FujiBusPacket DH field descriptors the library omits
+  CONFIG.SYS    the driver lines, FUJI_PORT=2 for this 86Box XT
+  AUTOEXEC.BAT  starts GCAL
+tests/          host-native tests, built at all five screen shapes
 tools/          headless capture and decode, per platform
 mekkogx/        the cross-platform build template
 ```

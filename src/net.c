@@ -34,7 +34,10 @@
 static char          url[112];
 static unsigned char rxbuf[GC_RXBUF];
 
-static unsigned int  st_bw;
+/* uint16_t, not unsigned int: the types are the same width on every
+   toolchain here, but Watcom is the one that treats the pointers as
+   distinct and network_status() takes a uint16_t*. */
+static uint16_t      st_bw;
 static unsigned char st_conn;
 static unsigned char st_err;
 
@@ -141,6 +144,15 @@ static unsigned char st_ok(unsigned char code)
  *
  * Anything other than 144 -- 138 timeout, 139 NAK, 143 checksum -- means the
  * device never gave us a usable reply at all, which is the timeout case.
+ *
+ * The INT F5 bus is different: its layer never writes fn_network_error at
+ * all, so the Atari reading above would report every failed open as a
+ * timeout -- including the 212 "authorize Google in the Web UI" a first-time
+ * user is guaranteed to hit. The fix is to ask, once. The channel is still
+ * addressable because network_open set the unit before issuing the control
+ * command, and network_status needs nothing else. (The apple2enh build
+ * likely shares this gap -- widening the gate needs an Apple regression
+ * capture, so it keeps the Atari branch for now.)
  */
 static unsigned char open_error(void)
 {
@@ -148,9 +160,24 @@ static unsigned char open_error(void)
        the failure path issues another SIO command and overwrites it. */
     gc_dev_ecode = fn_device_error;
 
+#if defined(__MSDOS__)
+    {
+        unsigned char dev  = gc_dev_ecode;
+        unsigned char code = probe();
+
+        /* probe() overwrites gc_dev_ecode when the status call itself fails.
+           The open's code is the one worth reporting, so put it back. */
+        gc_dev_ecode = dev;
+
+        /* GC_NOREPLY means the status call failed too, which on this bus is
+           the only thing that really is "no reply". */
+        return (code == GC_NOREPLY) ? 0 : code;
+    }
+#else
     if (fn_device_error == 144)
         return fn_network_error;
     return 0;
+#endif
 }
 
 /*

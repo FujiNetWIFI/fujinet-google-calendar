@@ -96,6 +96,22 @@
 #endif
 #define DET_STRIDE      (DET_COLS + 1)
 
+/*
+ * Every backend above knows its width at compile time; a PC does not -- it
+ * inherits whatever text mode it was booted in, 40 or 80 columns, and finds
+ * out at plat_init(). GC_RT_COLS turns the *wrap* width into a variable the
+ * backend sets, while DET_COLS goes on sizing the storage for the widest
+ * case. Wrapping narrower than the stride is safe; the reverse would be a
+ * buffer overrun, which is why DET_STRIDE itself stays derived and
+ * non-overridable.
+ */
+#ifdef GC_RT_COLS
+extern unsigned char gc_wrap_cols;      /* set by the backend, <= DET_COLS */
+#define GC_WRAP_COLS    gc_wrap_cols
+#else
+#define GC_WRAP_COLS    DET_COLS
+#endif
+
 /* Longest raw line accumulated before a hard flush. A width-80 listing row
    never exceeds 80, and the detail text arrives pre-wrapped at 38 or 80. */
 #define LINE_CAP        132
