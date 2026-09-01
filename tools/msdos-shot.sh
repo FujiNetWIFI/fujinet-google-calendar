@@ -69,8 +69,9 @@ if [ -n "$KEYS" ]; then
         -e 's/K_TODAY/j/g'                       \
         -e 's/K_VIEW1/k/g'   -e 's/K_VIEW2/l/g'  \
         -e 's/K_VIEW3/m/g'   -e 's/K_VIEW4/n/g'  \
+        -e 's/K_NEW/o/g'     -e 's/K_EDIT/p/g'   \
         -e 's/[ ,]//g')
-    if printf '%s' "$LETTERS" | grep -q '[^b-n]'; then
+    if printf '%s' "$LETTERS" | grep -q '[^b-p]'; then
         echo "unrecognised key in \"$KEYS\"" >&2
         exit 1
     fi

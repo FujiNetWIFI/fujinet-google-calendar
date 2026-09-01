@@ -132,10 +132,11 @@ void pmg_init(void)
 
     /*
      * crt0 sets both APPMHI and the C stack pointer to MEMTOP minus
-     * __RESERVED_MEMORY__ (2048, from LDFLAGS_EXTRA_ATARI in the top-level
+     * __RESERVED_MEMORY__ (1056, from LDFLAGS_EXTRA_ATARI in the top-level
      * Makefile) and the stack grows down from there, so everything from APPMHI
-     * up to MEMTOP is ours. Any 2K window contains a whole 1K-aligned 1K
-     * block, which is what the P/M buffer needs.
+     * up to MEMTOP is ours. $420 below $BC20 puts the floor at exactly $B800,
+     * so the aligned block below lands with $20 to spare -- the reserve used
+     * to be a lazy 2048, until the compose form wanted the other 992 bytes.
      *
      * Reading APPMHI rather than hardcoding the reserve size means a change to
      * the Makefile cannot silently put the buffer on top of the stack.

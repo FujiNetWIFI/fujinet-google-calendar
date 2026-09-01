@@ -66,6 +66,8 @@ SmartKeys calls into a CP/M binary that links neither library.
 | `←` `→` | previous / next period |
 | `↑` `↓` | move the selection |
 | `RETURN` | open the selection |
+| `N` | compose a new event on the shown date |
+| `E` | edit the selected event (day and agenda views, and the open event) |
 | `ESC` | settings, or back |
 | `R` `Q` | refresh / quit |
 
@@ -83,10 +85,11 @@ and the list screens have two banks because they have more than six actions:
 | | I | II | III | IV | V | VI |
 |---|---|---|---|---|---|---|
 | list | Day | Week | Month | Agenda | Today | More |
-| more | Refresh | Setup | Quit | | | Back |
-| detail | Pg Up | Pg Dn | Up | Down | | Back |
+| more | Refresh | Setup | Quit | New | Edit | Back |
+| detail | Pg Up | Pg Dn | Up | Down | Edit | Back |
 | picker | Up | Down | | | Pick | Back |
 | settings | Less | More | | Cal | | Save |
+| form | Up | Down | | | Save | Done |
 
 `More` and `Back` on the list screens are the bank toggle and never reach the
 program's key handling at all. The keyboard keys keep working everywhere: the
@@ -97,6 +100,42 @@ selects which view, which is what keeps the footer to a single row. Sixteen rows
 will not pay for one, so the CoCo's footer says `1-4:VIEW` instead and its
 settings screen legends the rest — the trade the Intellivision made at twenty
 columns with two hint pages.
+
+## Composing and editing
+
+`N` opens a blank form on the date under you — the anchor date, or the selected
+day in the week view. `E` opens the same form prefilled from the selected event;
+it works wherever a single event is selected, which is the day and agenda views
+and the open event detail. In the form, printable keys type into the active
+field, `RETURN` moves to the next field, and `ESC` (or the Adam's `Done`, or the
+CoCo's `BREAK`) leaves — silently if nothing was typed, through a save-or-discard
+ask otherwise. Nothing touches the network until the save itself, so backing out
+costs nothing.
+
+The fields mirror the adapter's draft keys: title, date, start and end times,
+location, notes and category. The rules worth knowing:
+
+- **A blank start time makes an all-day event** — that is the wire's own
+  spelling of all-day, mirrored rather than translated. A blank end time takes
+  the adapter's default: an hour after the start, or the same day for all-day.
+- **An edit sends only the fields you change.** The client keeps a truncated
+  copy of the title and nothing at all of the location, notes or category, so
+  sending untouched fields would clobber the server's fuller versions. The
+  corollary: a blank field on an edit means *leave it alone*, and clearing a
+  field to empty is not possible from these clients. Editing the title replaces
+  it with exactly what the field shows.
+- Blanking the start time *is* meaningful on an edit: it converts the event to
+  all-day. Changing the date alone moves a timed event and keeps its time and
+  duration.
+- Editing one occurrence of a repeating event edits that occurrence only.
+- Multi-day and open-ended timed events cannot be entered in this version.
+
+A save is committed by the adapter when the channel closes, and the verdict
+comes back in the device status that follows — every draft rejection collapses
+to one code there, which is why the form validates dates, times, and an
+end-without-start before a byte goes out. On the Apple II the bus does not
+carry that verdict (see its notes below): the save reports optimistically and
+the refetch on the way back to the view is the ground truth.
 
 ## Server setup
 
@@ -117,7 +156,11 @@ by the adapter's parser, which then silently falls back to UTC — after which
 screen displays the timezone specifically so that is diagnosable.
 
 Google must also be authorised in the FujiNet web UI, with the Calendar API
-enabled for the project and `calendar.readonly` in the grant's scope.
+enabled for the project and both `calendar.readonly` **and `calendar.events`**
+in the grant's scope. The second arrived with the compose/edit support, and an
+older grant never gains it on its own — if reading works but a save comes back
+`Authorize in the web UI` (code 167), re-authorise Google in the FujiNet web UI
+so the grant picks up the new scope.
 
 ## Atari implementation notes
 
@@ -174,6 +217,21 @@ build, so the client re-wraps regardless and handles both.
 
 **`clock_get_tz()` does not NUL-terminate** what it writes — it reads a length
 byte and copies exactly that many bytes. Zero the buffer first.
+
+**The compose editor uses the real Ctrl-arrows.** The bare `- = + *` aliases
+deliberately do not apply inside the form — there they are text, because a
+title or a time can contain any of them. `BACK S` erases; `RETURN` moves to
+the next field.
+
+**Compose is what spent the memory slack.** The form and its editor cost about
+5K of 6502 code, against a build that had 707 bytes free — so the P/M reserve
+came down from a lazy 2048 to the exact-fit 1056, the C stack from cc65's
+default 2K to 1K, `MAX_EVENTS` from 64 to 48 (the agenda then asks
+`?count=48`), `DET_ROWS` from 48 to 40, `GC_RXBUF` to 256, and the form buffer
+and the picker's list are both overlaid on `gc_det` (`GC_FORM_OVERLAY` /
+`GC_CALS_OVERLAY` in `gcal.h` — sound because neither is ever alive at the
+same time as the detail rows or each other). The BSS ceiling is now `$B400`;
+check `r2r/atari/gcal.map` after touching any knob.
 
 ## Apple II implementation notes
 
@@ -238,6 +296,17 @@ reaches `width`, so every line it emits is shorter than the wrap width and a
 noticeably short one can only be the last of something. The wrap width is
 estimated from the reply itself, which is what lets one rule serve both the 38
 of Atari firmware and the 80 of every other bus.
+
+**A save reports optimistically on this bus.** The adapter commits an event
+when the write channel closes and latches the verdict into the device status
+that follows — but the IWM bus layer in current firmware does not carry that
+latch, so there is nothing useful to ask after the close. The client reports
+the save as done and refetches the listing on the way back to the view, which
+is the ground truth: a rejected draft shows up as the event not appearing.
+(SIO, AdamNet, DriveWire and RS232 all carry the verdict; this is the one bus
+that does not, tracked as a firmware fix.) In the form itself, `DELETE`
+erases and the left arrow moves the cursor — this machine has a real `DELETE`
+key, so BASIC's erase-with-left-arrow convention does not get a vote.
 
 ## CoCo implementation notes
 
@@ -324,6 +393,23 @@ left to return to.
 which masks interrupts for the duration, so TIMER itself stops and the wall
 clock loses the length of every fetch. That is the Apple's SmartPort situation
 exactly, and the half-hour resync in `clock.c` is what bounds it.
+
+**The compose editor is append-and-backspace, in uppercase.** The left arrow
+*is* the erase key on this keyboard — BASIC's own convention — which leaves no
+key to walk the cursor with, and a 24-cell field window does not miss one.
+`inkey()` yields the 6847's uppercase-only set, which is also all the screen
+could echo, so that is what events typed here are titled in.
+
+**Compose is what re-drew the memory map.** The form costs ~4K of 6809 code
+on a machine that had a kilobyte and a half spare, so everything moved: the
+org came down to `$0E80`, the C stack moved to `$0D00` — growing down through
+Disk BASIC's buffer space, which only matters while `LOADM` itself is running
+— and `--limit` rose to `$7F00` where the stack's old top-of-memory gap used
+to be. The form buffer and the picker's list overlay `gc_det`, and
+`MAX_EVENTS` (24), `TITLE_LEN` (36), `DET_ROWS` (22), `GC_RXBUF` (96) and
+`LINE_CAP` (96) each gave up a notch; the Makefile carries the reasoning per
+knob. The link ends within a few dozen bytes of the ceiling by construction —
+`--limit` turns any future overrun into a build failure, which is the check.
 
 ## Adam implementation notes
 
@@ -477,6 +563,17 @@ deliberately empty — EOS `$FD53` is TURN_OFF_SOUND, which shuts the engine dow
 rather than the note, and the handler would go on calling `eos_play_sound()`
 into a dead engine for the rest of the run.
 
+**The compose form's SmartKey bank carries editor codes.** `SK_FORM`'s slots
+hold `E_*` values rather than `K_*` ones, and `plat_getch()` reads the same
+`sk_key[]` table `sk_bind()` fills — so `Save` and `Done` are labelled keys
+exactly as every other action on this machine is, with no second mechanism.
+`Save` skips the save-or-discard ask that `Done` poses. Form messages go on
+the status row (20), leaving the band's legend in place while they show. The
+compose code also ended the old 3.8K of headroom: the form and picker overlay
+`gc_det` here too, `DET_ROWS` came down to 40, and `GC_RXBUF` and `LINE_CAP`
+took the CoCo's cheap trades — check `__BSS_END_tail` against `$C800` after
+touching anything.
+
 ## MS-DOS implementation notes
 
 Open Watcom `wcc`, 8086 code, small model, BIOS text modes only — which is
@@ -612,6 +709,14 @@ static and the 4K stack; the link map (`r2r/msdos/gcal.map`, kept by
 `OPTION map=`) puts it at about 19K, and the `-DGC_FAKE_DATA` build — which
 links the canned wire data alongside the real transport — at just under 20K.
 Check it there before raising `MAX_EVENTS` or `DET_ROWS`.
+
+**`network_write` is the third shimmed call.** Like the open and the read
+before it, the library's version sends no FujiBusPacket parameter descriptor;
+the draft channel's writes need the length as one u16 (`DH=5`, the read's own
+shape) with command `'W'`, so `net_msdos.c` carries the corrected entry. In
+the form, `TAB` joins `RETURN` as next-field — what DOS fingers expect — and
+the form's geometry follows `ui_geom()` like everything else: the 80-column
+layout is the Apple's, the 40-column one the Atari's.
 
 ## Testing
 
@@ -787,7 +892,9 @@ run `defoogi make msdos` afterwards to get the shipping binary back.
 src/            portable core
   gcal.h        every shared type and the plat_* / ui_* contract
   main.c        boot and the nested screen loops
-  net.c         device specs, the streaming read, canned data
+  net.c         device specs, the streaming read, the draft channel
+  form.c        the compose form's model, validation and wire format
+  compose.c     the compose/edit screen loop and line editor
   index.c       the listing parser
   lines.c       the line splitter, and the bus disagreement behind it
   color.c       Google's eleven colour names

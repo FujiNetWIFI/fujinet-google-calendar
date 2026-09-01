@@ -63,6 +63,9 @@ static unsigned char map(unsigned char c)
 
     case 'r': case 'R':             return K_REFRESH;
     case 'q': case 'Q':             return K_QUIT;
+
+    case 'n': case 'N':             return K_NEW;
+    case 'e': case 'E':             return K_EDIT;
     }
 
     return K_NONE;
@@ -134,4 +137,43 @@ void plat_anykey(void)
 {
     while (!rawkey())
         plat_vsync();
+}
+
+/*
+ * The compose form's read. DELETE ($7F) erases; the left arrow ($08) moves
+ * the cursor, which is what it does in every Apple editor -- erasing is
+ * what it means in BASIC, but this machine has a DELETE key and BASIC does
+ * not get a vote on a form. Polls around plat_vsync() like plat_getkey(),
+ * and for the same reason: no RTCLOK, so the frame counter only advances
+ * when somebody turns it, and the clock has to stay honest across a form
+ * someone left open.
+ */
+unsigned char plat_getch(void)
+{
+    unsigned char c;
+
+#ifdef GC_FAKE_KEYS
+    /* Spent verbatim: the scripted K_* codes' low values land on E_* inside
+       the form, which is what lets a capture drive the field cursor. */
+    if (fake_idx < sizeof(fake_keys))
+        return fake_keys[fake_idx++];
+#endif
+
+    for (;;) {
+        c = rawkey();
+        if (c) {
+            switch (c) {
+            case CH_CURS_UP:        return E_UP;
+            case CH_CURS_DOWN:      return E_DOWN;
+            case CH_CURS_LEFT:      return E_LEFT;
+            case CH_CURS_RIGHT:     return E_RIGHT;
+            case CH_ENTER:          return E_ENTER;
+            case CH_ESC:            return E_DONE;
+            case 0x7F:              return E_BS;
+            }
+            if (c >= 0x20 && c < 0x7F)
+                return c;
+        }
+        plat_vsync();
+    }
 }

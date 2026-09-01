@@ -135,6 +135,9 @@ static const char *status_text(void)
         case GC_DENIED:     return "Authorize in the web UI";
         case GC_NOAUTH:     return "Not authorized";
         case GC_NOSERVICE:  return "Service unavailable";
+        case GC_BADDRAFT:   return "Event rejected - check fields";
+        case GC_FULL:       return "Draft too large";
+        case GC_RDONLY:     return "Calendar is read-only";
         default:            return "Calendar error";
         }
     }
@@ -229,6 +232,9 @@ void ui_busy(unsigned char reason)
         break;
     case BUSY_CALS:
         scr_center(12, MT_HOURGLASS " Reading calendars...", 0);
+        break;
+    case BUSY_SAVE:
+        scr_center(12, MT_HOURGLASS " Saving event...", 0);
         break;
     default:
         scr_center(12, MT_HOURGLASS " Fetching calendar...", 0);
@@ -369,6 +375,7 @@ void ui_setup(void)
     scr_text(13, 4, "1 2 3 4  day week month agenda     0  jump to today", 0);
     scr_text(14, 4, "RETURN   open the selection        R  refresh", 0);
     scr_text(15, 4, "ESC      settings / back           Q  quit", 0);
+    scr_text(16, 4, "N        new event                 E  edit event", 0);
 
     chip_legend();
 
@@ -386,4 +393,92 @@ void ui_setup_lead(void)
     strcpy(sbuf, n);
     strcat(sbuf, al_lead == 1 ? " minute before" : " minutes before");
     scr_field(10, 4, sbuf, 30, 0);
+}
+
+/* ------------------------------------------------------------------ */
+/* Compose / edit form                                                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The settings screen's flat arrangement, with eighty columns to spend on
+ * full-word labels and the widest field windows of the five backends. The
+ * active field is a full inverse bar -- the list's selection language --
+ * with the cursor cell knocked back to normal video, a hole in the bar.
+ * compose.c owns the cursor and the horizontal scroll; this end paints
+ * what it is given.
+ */
+
+static const unsigned char frm_rows[FRM_NFIELDS] = { 4, 6, 7, 8, 10, 12, 14 };
+
+#define FRM_VAL_COL     14
+#define FRM_HINT_ROW    17
+#define FRM_MSG_ROW     20
+
+static const unsigned char frm_w[FRM_NFIELDS] = {
+    62, FRM_DATE_MAX + 1, FRM_TIME_MAX + 1, FRM_TIME_MAX + 1, 62, 62, 17
+};
+
+unsigned char ui_form_width(unsigned char f)
+{
+    return frm_w[f];
+}
+
+void ui_form(unsigned char editing)
+{
+    static const char *const label[FRM_NFIELDS] = {
+        "Title", "Date", "Start time", "End time",
+        "Location", "Description", "Category"
+    };
+    unsigned char f;
+
+    scr_clear();
+
+    scr_field(0, 0, "", SCR_COLS, 1);
+    logo_small(LOGO_ROW, LOGO_COL);
+    scr_text(0, HDR_TEXT_COL, editing ? "Edit event" : "New event", 1);
+
+    for (f = 0; f < FRM_NFIELDS; f++)
+        scr_text(frm_rows[f], 2, label[f], 0);
+
+    scr_text(FRM_HINT_ROW, 2, "Blank start time makes an all-day event", 0);
+    if (editing)
+        scr_text(FRM_HINT_ROW + 1, 2,
+                 "Only fields you change are sent; blank leaves one as it is",
+                 0);
+
+    ui_footer("RET:NEXT FIELD   " MT_UP MT_DOWN ":FIELD   " MT_LEFT MT_RIGHT
+              ":CURSOR   DEL:ERASE   ESC:DONE", 0);
+}
+
+void ui_form_row(unsigned char f, const char *win, unsigned char curx,
+                 unsigned char active)
+{
+    unsigned char w = ui_form_width(f);
+    char          b[2];
+
+    scr_field(frm_rows[f], FRM_VAL_COL, win, w, active);
+
+    if (active) {
+        b[0] = curx < strlen(win) ? win[curx] : ' ';
+        b[1] = '\0';
+        scr_field(frm_rows[f], (unsigned char) (FRM_VAL_COL + curx), b, 1, 0);
+    }
+}
+
+void ui_form_msg(unsigned char msg)
+{
+    const char *s;
+
+    scr_row_clear(FRM_MSG_ROW);
+
+    switch (msg) {
+    case FM_ASK:       s = "Save event? (Y/N)";              break;
+    case FM_NEEDTITLE: s = "A title is required";            break;
+    case FM_BADDATE:   s = "Date must be YYYY-MM-DD";        break;
+    case FM_BADTIME:   s = "Time must be HH:MM";             break;
+    case FM_ENDALONE:  s = "An end time needs a start time"; break;
+    default:           return;                  /* FM_NONE: cleared above */
+    }
+
+    scr_center(FRM_MSG_ROW, s, 1);
 }

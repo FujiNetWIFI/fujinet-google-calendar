@@ -56,6 +56,9 @@ static unsigned char map(unsigned char c)
 
     case 'r': case 'R': case KEY_CLEAR: return K_REFRESH;
     case 'q': case 'Q':             return K_QUIT;
+
+    case 'n': case 'N':             return K_NEW;
+    case 'e': case 'E':             return K_EDIT;
     }
 
     return K_NONE;
@@ -136,4 +139,37 @@ unsigned char plat_getkey_poll(void)
 void plat_anykey(void)
 {
     plat_key_block();
+}
+
+/*
+ * The compose form's read. The left arrow is E_BS rather than a cursor
+ * move, because on this keyboard the left arrow *is* the erase key --
+ * BASIC's own convention -- which leaves the editor append-and-backspace:
+ * there is no key left to walk the cursor with, and a 24-cell window does
+ * not miss it. inkey() yields the 6847's uppercase-only set, which is also
+ * all the screen could echo.
+ */
+unsigned char plat_getch(void)
+{
+#ifdef GC_FAKE_KEYS
+    /* Spent verbatim: the scripted K_* codes' low values land on E_* inside
+       the form, which is what lets a capture drive the field cursor. */
+    if (fake_idx < sizeof(fake_keys))
+        return fake_keys[fake_idx++];
+#endif
+
+    for (;;) {
+        unsigned char c = plat_key_block();
+
+        switch (c) {
+        case KEY_UP:    return E_UP;
+        case KEY_DOWN:  return E_DOWN;
+        case KEY_ENTER: return E_ENTER;
+        case KEY_BREAK: return E_DONE;
+        case KEY_LEFT:  return E_BS;
+        }
+
+        if (c >= 0x20 && c < 0x7F)
+            return c;
+    }
 }

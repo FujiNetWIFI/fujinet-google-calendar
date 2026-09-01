@@ -236,18 +236,19 @@ static int read_chunk(void)
     return network_read(url, rxbuf, chunk);
 }
 
-static unsigned char open_and_settle(unsigned char aux1, unsigned char aux2)
+/* The open alone, shared by every fetch and by the draft channel. A window
+   open is one upstream HTTPS round trip per calendar -- and a draft-edit
+   open re-runs the same query -- so widen the SIO timeout around it and put
+   it straight back afterwards. */
+static unsigned char chan_open(unsigned char aux1, unsigned char aux2)
 {
     unsigned char code;
 
     gc_ecode = 0;
     gc_dev_ecode = 0;
-    split_reset();
 
     plat_net_begin();
 
-    /* A window open is one upstream HTTPS round trip per calendar, so widen
-       the SIO timeout around it and put it straight back afterwards. */
     gc_stage = "open";
     fn_default_timeout = TMO_LONG;
     code = network_open(url, aux1, aux2);
@@ -257,6 +258,18 @@ static unsigned char open_and_settle(unsigned char aux1, unsigned char aux2)
         fail(open_error());
         return 0;
     }
+
+    return 1;
+}
+
+static unsigned char open_and_settle(unsigned char aux1, unsigned char aux2)
+{
+    unsigned char code;
+
+    split_reset();
+
+    if (!chan_open(aux1, aux2))
+        return 0;
 
     gc_stage = "status";
     code = settle();
@@ -593,5 +606,114 @@ unsigned char gc_fetch_cals(void)
     plat_net_end();
     return 1;
     }
+#endif
+}
+
+/* ------------------------------------------------------------------ */
+/* The draft channel                                                   */
+/* ------------------------------------------------------------------ */
+
+/*
+ * A WRITE open stages nothing to read, so there is no settle() here; the
+ * open itself is where an edit's /N is resolved (and can fail with 170).
+ * The commit happens at close, and the verdict is only learnable from the
+ * STATUS that follows it -- the adapter latches the close error precisely
+ * so that status can report it. form_put() failures are remembered rather
+ * than acted on, because the channel still has to be closed and the close
+ * is where the failure gets reported from.
+ */
+
+#ifndef GC_FAKE_DATA
+static unsigned char wr_failed;
+#endif
+
+unsigned char gc_save_begin(unsigned char editing, unsigned char view,
+                            const char *evnum)
+{
+#ifdef GC_FAKE_DATA
+    (void) editing;
+    (void) view;
+    (void) evnum;
+    gc_ecode = 0;
+    return 1;
+#else
+    wr_failed = 0;
+
+    if (editing) {
+        /* Exactly the spec the listing was fetched with, plus /N: the
+           adapter numbers events within the (selector, view, date, query)
+           window, so any deviation addresses a different event. */
+        build_url(view, evnum);
+    } else {
+        /* Compose is selector-only -- no view, no date. Empty and "*" both
+           collapse to the bare scheme, which the adapter takes as the
+           primary calendar; "*" itself is not a compose target and would
+           be corrupted on a non-DIRECTORY open anyway. */
+        strcpy(url, "N:GCAL://");
+        if (gc_cal[0] && gc_cal[0] != '*')
+            strcat(url, gc_cal);
+    }
+
+    /* No settle(): a write channel stages nothing to read. The open is
+       where an edit's /N is resolved, so 170 lands here. */
+    return chan_open(GC_MODE_WRITE, 0);
+#endif
+}
+
+void form_put(const char *line)
+{
+#ifdef GC_FAKE_DATA
+    (void) line;
+#else
+    gc_stage = "write";
+
+    if (network_write(url, (const uint8_t *) line,
+                      (uint16_t) strlen(line)) != FN_ERR_OK) {
+        wr_failed = 1;
+        gc_dev_ecode = fn_device_error;
+    }
+#endif
+}
+
+unsigned char gc_save_end(void)
+{
+#ifdef GC_FAKE_DATA
+    gc_ecode = 0;
+    return 1;
+#else
+    gc_stage = "save";
+    network_close(url);         /* the close is the commit */
+
+    if (wr_failed) {
+        /* Part of the draft never reached the adapter. Whatever it just
+           committed -- most likely a rejection for a half-sent draft --
+           the event composed here is not what went out. */
+        plat_net_end();
+        gc_ecode = 0;
+        return 0;
+    }
+
+#if defined(__APPLE2ENH__)
+    /* The IWM bus layer does not latch the commit verdict into the STATUS
+       that follows a close, so there is nothing useful to ask. Report the
+       save optimistically: the refetch on the way back to the view is the
+       ground truth, and a rejected draft shows up as the event not
+       appearing. README carries the caveat. */
+    plat_net_end();
+    return 1;
+#else
+    {
+        unsigned char code = probe();
+
+        plat_net_end();
+
+        if (!st_ok(code)) {
+            gc_ecode = (unsigned char) ((code == GC_NOREPLY) ? 0 : code);
+            return 0;
+        }
+    }
+
+    return 1;
+#endif
 #endif
 }

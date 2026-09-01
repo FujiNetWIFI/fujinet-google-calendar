@@ -173,6 +173,9 @@ static const char *status_text(void)
         case GC_DENIED:     return "Authorize in the web UI";
         case GC_NOAUTH:     return "Not authorized";
         case GC_NOSERVICE:  return "Service unavailable";
+        case GC_BADDRAFT:   return "Event rejected - check fields";
+        case GC_FULL:       return "Draft too large";
+        case GC_RDONLY:     return "Calendar is read-only";
         default:            return "Calendar error";
         }
     }
@@ -276,6 +279,9 @@ void ui_busy(unsigned char reason)
         break;
     case BUSY_CALS:
         scr_center(12, "Reading calendars...", A_TEXT);
+        break;
+    case BUSY_SAVE:
+        scr_center(12, "Saving event...", A_TEXT);
         break;
     default:
         scr_center(12, "Fetching calendar...", A_TEXT);
@@ -476,10 +482,13 @@ void ui_setup(void)
                  A_TEXT);
         scr_text(15, 4, "ESC      settings / back           Q  quit",
                  A_TEXT);
+        scr_text(16, 4, "N        new event                 E  edit event",
+                 A_TEXT);
     } else {
         scr_text(13, 4, "1234 views    0 today", A_TEXT);
         scr_text(14, 4, "RET  open     R refresh", A_TEXT);
         scr_text(15, 4, "ESC  back     Q quit", A_TEXT);
+        scr_text(16, 4, "N    new      E edit", A_TEXT);
     }
 
     chip_legend();
@@ -498,4 +507,104 @@ void ui_setup_lead(void)
     strcpy(sbuf, n);
     strcat(sbuf, al_lead == 1 ? " minute before" : " minutes before");
     scr_field(10, 4, sbuf, 30, A_TEXT);
+}
+
+/* ------------------------------------------------------------------ */
+/* Compose / edit form                                                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The same flat-header arrangement as the picker and the settings page.
+ * compose.c owns the cursor and the horizontal scroll; this end only knows
+ * how to paint one row and where the rows are. The active field is an
+ * A_SEL bar with the cursor cell knocked back to A_TEXT -- a hole in the
+ * bar -- which reads on all three attribute tables, the MDA included.
+ */
+
+static const unsigned char frm_rows[FRM_NFIELDS] = { 4, 6, 7, 8, 10, 12, 14 };
+
+#define FRM_MSG_ROW     19
+#define FRM_HINT_ROW    16
+
+static unsigned char frm_valcol(void)
+{
+    return (unsigned char) (scr_wide ? 15 : 8);
+}
+
+unsigned char ui_form_width(unsigned char f)
+{
+    switch (f) {
+    case FRM_DATE:  return FRM_DATE_MAX + 1;    /* room for the cursor */
+    case FRM_START:
+    case FRM_END:   return FRM_TIME_MAX + 1;
+    default:        return (unsigned char) (scr_cols - frm_valcol() - 2);
+    }
+}
+
+void ui_form(unsigned char editing)
+{
+    static const char *const label80[FRM_NFIELDS] = {
+        "Title", "Date", "Start time", "End time",
+        "Location", "Description", "Category"
+    };
+    static const char *const label40[FRM_NFIELDS] = {
+        "Title", "Date", "Start", "End", "Where", "Notes", "Cat"
+    };
+    const char *const *label = scr_wide ? label80 : label40;
+    unsigned char f;
+
+    scr_clear();
+
+    scr_field(0, 0, "", scr_cols, A_BAR);
+    logo_small(LOGO_ROW, LOGO_COL);
+    scr_text(0, HDR_TEXT_COL, editing ? "Edit event" : "New event", A_BAR);
+
+    for (f = 0; f < FRM_NFIELDS; f++)
+        scr_text(frm_rows[f], 2, label[f], A_TEXT);
+
+    scr_text(FRM_HINT_ROW, 2, scr_wide
+             ? "Blank start time makes an all-day event"
+             : "Blank start = all day", A_DIM);
+    if (editing)
+        scr_text((unsigned char) (FRM_HINT_ROW + 1), 2, scr_wide
+                 ? "Only fields you change are sent; blank leaves one as it is"
+                 : "Blank field = unchanged", A_DIM);
+
+    ui_footer(scr_wide
+              ? "TAB/RET:NEXT FIELD  " GL_UPDOWN ":FIELD  " GL_LR
+                ":CURSOR  ESC:DONE"
+              : "RET:NEXT  ESC:DONE", 0);
+}
+
+void ui_form_row(unsigned char f, const char *win, unsigned char curx,
+                 unsigned char active)
+{
+    unsigned char row = frm_rows[f];
+    unsigned char col = frm_valcol();
+    unsigned char w = ui_form_width(f);
+
+    scr_field(row, col, win, w, (unsigned char) (active ? A_SEL : A_TEXT));
+
+    if (active)
+        scr_cell(row, (unsigned char) (col + curx),
+                 curx < strlen(win) ? (unsigned char) win[curx] : ' ',
+                 scr_attr_byte(A_TEXT));
+}
+
+void ui_form_msg(unsigned char msg)
+{
+    const char *s;
+
+    scr_row_clear(FRM_MSG_ROW);
+
+    switch (msg) {
+    case FM_ASK:       s = "Save event? (Y/N)";               break;
+    case FM_NEEDTITLE: s = "A title is required";             break;
+    case FM_BADDATE:   s = "Date must be YYYY-MM-DD";         break;
+    case FM_BADTIME:   s = "Time must be HH:MM";              break;
+    case FM_ENDALONE:  s = "An end time needs a start time";  break;
+    default:           return;                  /* FM_NONE: cleared above */
+    }
+
+    scr_center(FRM_MSG_ROW, s, A_EMPH);
 }

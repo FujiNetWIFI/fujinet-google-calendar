@@ -29,7 +29,8 @@
  * These are the RAM knobs, and they are why the numbers here are not the
  * Intellivision's. The link fails loudly when they are too large -- ld65
  * reports the BSS overflow in bytes -- so if you raise one, check the BSS line
- * in r2r/atari/gcal.map against the $AC20 ceiling afterwards.
+ * in r2r/atari/gcal.map against the $B400 ceiling afterwards (MEMTOP minus
+ * the P/M reserve and the C stack; see LDFLAGS_EXTRA_ATARI).
  *
  * Measure from clean when you change one. `make atari` keys off timestamps
  * rather than flags, so a build left over from tools/atari-shot.sh relinks its
@@ -64,8 +65,8 @@
 
 /* eventNum as ASCII decimal. It goes straight back out in a URL and is never
    used for arithmetic, so it is kept as the text we already had. The adapter
-   caps a window at 300, so three digits always suffice. */
-#define EVNUM_LEN       6
+   caps a window at 300, so three digits and the NUL always suffice. */
+#define EVNUM_LEN       4
 
 /* Agenda display list: at most one separator per event, plus the events, so
    twice MAX_EVENTS is the exact bound. Overridable only to trade the tail of a
@@ -113,8 +114,12 @@ extern unsigned char gc_wrap_cols;      /* set by the backend, <= DET_COLS */
 #endif
 
 /* Longest raw line accumulated before a hard flush. A width-80 listing row
-   never exceeds 80, and the detail text arrives pre-wrapped at 38 or 80. */
+   never exceeds 80, and the detail text arrives pre-wrapped at 38 or 80 --
+   so the tight builds trim this toward 80-and-some without losing a byte
+   that could actually arrive. */
+#ifndef LINE_CAP
 #define LINE_CAP        132
+#endif
 
 /*
  * The network receive buffer. Every reader drains through split_lines(), which
@@ -175,6 +180,11 @@ extern unsigned char gc_wrap_cols;      /* set by the backend, <= DET_COLS */
 #define GC_MODE_READ    4
 #define GC_MODE_DIR     6
 
+/* WRITE opens a draft channel: field lines go out via network_write() and the
+   adapter commits the event on close. A selector-only spec composes a new
+   event; the detail spec (view/date/N) edits that event. aux2 is ignored. */
+#define GC_MODE_WRITE   8
+
 /* NDEV_STATUS codes (status_error_codes.h) that this client maps.
    GC_NOREPLY is ours, not the device's: it means the status call itself
    failed, which is distinct from the device answering "0 bytes". */
@@ -186,6 +196,17 @@ extern unsigned char gc_wrap_cols;      /* set by the backend, <= DET_COLS */
 #define GC_NOTFOUND     170
 #define GC_NOSERVICE    210
 #define GC_NOAUTH       212
+
+/* Codes a write channel can latch into the STATUS that follows the
+   commit-on-close. Every draft rejection collapses to GC_BADDRAFT -- the
+   specific reason only reaches the adapter's debug log, which is why
+   form_validate() catches what it can before a byte goes out. GC_DENIED on a
+   save usually means the OAuth grant predates the calendar.events scope and
+   the user has to re-authorize Google in the web UI. */
+#define GC_WRONLY       131     /* read on a write channel */
+#define GC_BADDRAFT     132     /* the adapter rejected the draft */
+#define GC_RDONLY       135     /* provider or mode cannot write */
+#define GC_FULL         162     /* draft exceeded the adapter's 16K cap */
 
 /* fn_default_timeout is in 64-frame ticks. 15 (the library default) is ~16s;
    a window open is one upstream HTTPS round trip per calendar. */
@@ -298,7 +319,12 @@ extern unsigned char gc_agd_count;
 extern unsigned char gc_daycnt[32];
 extern unsigned char gc_daycol[32];
 
+/* Under GC_CALS_OVERLAY the picker's list lives in borrowed RAM; the macro
+   that replaces this array is down in the compose-form section, after the
+   struct whose size sets its offset. */
+#ifndef GC_CALS_OVERLAY
 extern struct cal    gc_cals[CAL_MAX];
+#endif
 extern unsigned char gc_cal_count;
 
 extern char          gc_det[DET_ROWS][DET_STRIDE];
@@ -423,6 +449,140 @@ extern unsigned char al_ev;
 #define AL_NONE     0xFF
 
 /* ------------------------------------------------------------------ */
+/* Compose / edit form                                                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * One row per field, in screen order. The DATE/START/END trio is what the
+ * adapter's START:/END: keys are built from; a blank START time makes the
+ * event all-day, exactly as a date-only START does on the wire.
+ */
+#define FRM_TITLE   0
+#define FRM_DATE    1
+#define FRM_START   2
+#define FRM_END     3
+#define FRM_LOC     4
+#define FRM_DESC    5
+#define FRM_CAT     6
+#define FRM_NFIELDS 7
+
+/*
+ * Field capacities, excluding the NUL. These are RAM knobs like TITLE_LEN:
+ * the defaults suit the 40-column targets, and the 80-column backends widen
+ * LOC and DESC because they can show what they store. The wire imposes no
+ * limit worth honouring here -- the adapter takes 16K a draft.
+ */
+#ifndef FRM_TITLE_MAX
+#define FRM_TITLE_MAX   (TITLE_LEN - 1)
+#endif
+#ifndef FRM_LOC_MAX
+#define FRM_LOC_MAX     32
+#endif
+#ifndef FRM_DESC_MAX
+#define FRM_DESC_MAX    96
+#endif
+#define FRM_CAT_MAX     15      /* the wire's category column is 14 */
+#define FRM_DATE_MAX    10      /* YYYY-MM-DD */
+#define FRM_TIME_MAX    5       /* HH:MM */
+
+/* The longest emitted line is "DESCRIPTION: " + desc + terminator + NUL;
+   everything else, including the echo window, is shorter. */
+#define FRM_LINE_MAX    (FRM_DESC_MAX + 16)
+
+struct frmbuf {
+    char title[FRM_TITLE_MAX + 1];
+    char date[FRM_DATE_MAX + 1];
+    char start[FRM_TIME_MAX + 1];
+    char end[FRM_TIME_MAX + 1];
+    char loc[FRM_LOC_MAX + 1];
+    char desc[FRM_DESC_MAX + 1];
+    char cat[FRM_CAT_MAX + 1];
+    char line[FRM_LINE_MAX];    /* emit and echo scratch, shared */
+};
+
+/* sizeof(struct frmbuf), spelled for the preprocessor: the overlay guards
+   below have to run in #if (CMOC cannot fold sizeof into an array bound),
+   and a struct of nothing but chars has no padding to make them differ.
+   tests/hosttest.c asserts the two stay equal. */
+#define FRMBUF_SIZE ((FRM_TITLE_MAX + 1) + (FRM_DATE_MAX + 1) + \
+                     2 * (FRM_TIME_MAX + 1) + (FRM_LOC_MAX + 1) + \
+                     (FRM_DESC_MAX + 1) + (FRM_CAT_MAX + 1) + FRM_LINE_MAX)
+
+/*
+ * GC_FORM_OVERLAY parks the form on top of the detail buffer instead of
+ * paying for it. Safe because the two are never alive together: entering the
+ * form abandons any detail screen, and the refetch on the way back rebuilds
+ * gc_det from scratch. form.c carries the compile-time size guard.
+ */
+#ifdef GC_FORM_OVERLAY
+#define frm (*(struct frmbuf *) gc_det)
+#else
+extern struct frmbuf frm;
+#endif
+
+/*
+ * GC_CALS_OVERLAY parks the calendar picker's list in the same borrowed
+ * RAM. Also sound, for the same shape of reason: gc_cals only lives inside
+ * do_pick() -- fetched, painted, and copied out of before it returns --
+ * and neither the detail screen nor the form can be up at the same time as
+ * the picker. It sits behind the form when the buffer has room for both,
+ * else on top of it -- the form and the picker are themselves never alive
+ * together, so sharing the base is as sound as sharing the buffer.
+ * form.c guards whichever placement this resolves to.
+ */
+#ifdef GC_CALS_OVERLAY
+#define GC_CALS_SIZE (CAL_MAX * (CAL_NAME_LEN + CAL_SEL_LEN))
+#if FRMBUF_SIZE + GC_CALS_SIZE <= DET_ROWS * DET_STRIDE
+#define GC_CALS_OFF FRMBUF_SIZE
+#else
+#define GC_CALS_OFF 0
+#endif
+#define gc_cals ((struct cal *) ((char *) gc_det + GC_CALS_OFF))
+#endif
+
+/* Which fields the user has touched. Compose emits every non-empty field;
+   edit emits only the dirty ones, so an untouched field can never clobber
+   the server's copy with this client's truncated one. */
+extern unsigned char frm_dirty[FRM_NFIELDS];
+
+/* Form messages, drawn by ui_form_msg(). FM_NONE restores the normal hints. */
+#define FM_NONE      0
+#define FM_ASK       1          /* save? yes / no */
+#define FM_NEEDTITLE 2
+#define FM_BADDATE   3
+#define FM_BADTIME   4
+#define FM_ENDALONE  5          /* an END time needs a START time */
+
+/* form.c -- the form model. Pure; tests/hosttest.c exercises all of it.
+   form_init with e == 0 starts a blank compose on (y, mo, d); with an
+   event it prefills for an edit. form_emit sends the draft one line at a
+   time through form_put() -- net.c's in the real program, the capture in
+   the tests -- and returns how many lines went out; write failures are
+   form_put's own to latch, and gc_save_end() is where they report. */
+void          form_init(const struct event *e, unsigned int y,
+                        unsigned char mo, unsigned char d);
+char         *form_field_ptr(unsigned char f);
+unsigned char form_field_max(unsigned char f);
+unsigned char form_date_ok(const char *s);
+unsigned char form_time_ok(const char *s);
+unsigned char form_any_dirty(void);
+unsigned char form_validate(unsigned char editing, unsigned char *bad);
+unsigned char form_emit(unsigned char editing);
+void          form_put(const char *line);
+
+/* compose.c -- the form screen. Both return 1 when an event was saved and
+   the listing is stale, 0 on cancel or a failure already reported. */
+unsigned char compose_new(unsigned int y, unsigned char mo, unsigned char d);
+unsigned char compose_edit(unsigned char view, unsigned char ev);
+
+/* net.c -- the draft channel. begin opens it, form_put() above writes the
+   field lines into it, end closes -- which is what commits -- and reads
+   the verdict, a latched write failure included. */
+unsigned char gc_save_begin(unsigned char editing, unsigned char view,
+                            const char *evnum);
+unsigned char gc_save_end(void);
+
+/* ------------------------------------------------------------------ */
 /* Platform backend -- implemented per target under src/<platform>/     */
 /* ------------------------------------------------------------------ */
 
@@ -459,6 +619,8 @@ extern unsigned char al_ev;
 #define K_VIEW2     11          /* week */
 #define K_VIEW3     12          /* month */
 #define K_VIEW4     13          /* agenda */
+#define K_NEW       14          /* compose an event on the anchor date */
+#define K_EDIT      15          /* edit the selected event */
 
 void          plat_init(void);
 void          plat_shutdown(void);
@@ -472,6 +634,26 @@ void          plat_net_end(void);
 unsigned char plat_getkey(void);        /* blocks, returns a K_* code */
 unsigned char plat_getkey_poll(void);   /* K_NONE at once when nothing waits */
 void          plat_anykey(void);
+
+/*
+ * The form's key read. Printable ASCII $20-$7E passes through verbatim;
+ * everything with a meaning maps to an E_* code below $20, so the two can
+ * never collide. Blocks like plat_getkey() -- and with the same obligation
+ * to keep plat_vsync() turning where the frame counter needs a hand.
+ *
+ * Not every backend can produce every code: a keyboard without cursor keys
+ * simply never sends E_LEFT, and the editor edits append-and-backspace there.
+ */
+#define E_ENTER     1           /* next field */
+#define E_UP        2
+#define E_DOWN      3
+#define E_LEFT      4
+#define E_RIGHT     5
+#define E_BS        6           /* delete before the cursor */
+#define E_DONE      7           /* leave the form (ESC / BREAK / SmartKey) */
+#define E_SAVE      8           /* save now, skipping the ask (Adam SmartKey) */
+
+unsigned char plat_getch(void);
 
 /* Frame timing. plat_ticks() is a free-running frame counter that keeps
    running while a blocking screen sits inside the keyboard handler, which is
@@ -489,6 +671,7 @@ void          plat_silence(void);
 #define BUSY_INDEX  2
 #define BUSY_DETAIL 3
 #define BUSY_CALS   4
+#define BUSY_SAVE   5
 
 void          ui_splash(void);
 void          ui_notfound(void);
@@ -507,5 +690,24 @@ void          ui_setup_lead(void);      /* the lead line alone */
 void          ui_clock(void);
 void          ui_alarm(unsigned char phase);
 void          ui_hints(unsigned char view);
+
+/*
+ * The form screen. ui_form() paints the chrome -- title, field labels, the
+ * footer hints -- and nothing inside the fields; compose.c then draws every
+ * row through ui_form_row(), which is also how each keystroke is echoed.
+ *
+ * ui_form_row() gets the visible slice of the field already windowed --
+ * compose.c owns the horizontal scroll -- with curx the cursor's column
+ * within it, only meaningful while `active`. This is deliberately the one
+ * hook where the backends' inv-flag / attribute-role split lives.
+ *
+ * ui_form_width() reports how many text columns field f's window has, so the
+ * engine and the painter cannot disagree about where the scroll lands.
+ */
+void          ui_form(unsigned char editing);
+unsigned char ui_form_width(unsigned char f);
+void          ui_form_row(unsigned char f, const char *win,
+                          unsigned char curx, unsigned char active);
+void          ui_form_msg(unsigned char msg);
 
 #endif /* GCAL_H */

@@ -114,6 +114,9 @@ static unsigned char map(unsigned int ax)
 
     case 'r': case 'R':             return K_REFRESH;
     case 'q': case 'Q':             return K_QUIT;
+
+    case 'n': case 'N':             return K_NEW;
+    case 'e': case 'E':             return K_EDIT;
     }
 
     return K_NONE;
@@ -190,4 +193,61 @@ void plat_anykey(void)
     exit(0);
 #endif
     rawkey();
+}
+
+/*
+ * The compose form's read: printable ASCII through verbatim, editing keys
+ * as E_* codes. Tab joins RETURN as next-field because that is what a DOS
+ * user's fingers do in any form. Backspace is the BIOS's 0x08.
+ */
+static unsigned char mapch(unsigned int ax)
+{
+    unsigned char al = (unsigned char) (ax & 0xFF);
+
+    if (al == 0x00 || al == 0xE0) {
+        switch ((unsigned char) (ax >> 8)) {
+        case SC_UP:                 return E_UP;
+        case SC_DOWN:               return E_DOWN;
+        case SC_LEFT:               return E_LEFT;
+        case SC_RIGHT:              return E_RIGHT;
+        }
+        return 0;
+    }
+
+    switch (al) {
+    case 0x0D:                      return E_ENTER;
+    case 0x09:                      return E_ENTER;
+    case 0x1B:                      return E_DONE;
+    case 0x08:                      return E_BS;
+    }
+
+    if (al >= 0x20 && al < 0x7F)
+        return al;
+
+    return 0;
+}
+
+unsigned char plat_getch(void)
+{
+#if defined(GC_FAKE_KEYS) || defined(GC_FAKE_KEYS_STR)
+    /* The scripted stream is spent verbatim: the letter table's low codes
+       land on E_* values inside the form, which is what lets a capture
+       script drive the field cursor at all. */
+    {
+        unsigned char k = fake_next();
+        if (k != K_NONE)
+            return k;
+    }
+#endif
+
+#ifdef GC_SHOT
+    scr_snapshot();
+    exit(0);
+#endif
+
+    for (;;) {
+        unsigned char c = mapch(rawkey());
+        if (c)
+            return c;
+    }
 }

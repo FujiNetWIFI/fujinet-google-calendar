@@ -109,6 +109,9 @@ static const char *status_text(void)
         case GC_DENIED:     return "NOT AUTHORIZED";
         case GC_NOAUTH:     return "NOT AUTHORIZED";
         case GC_NOSERVICE:  return "NO SERVICE";
+        case GC_BADDRAFT:   return "EVENT REJECTED";
+        case GC_FULL:       return "DRAFT TOO BIG";
+        case GC_RDONLY:     return "READ ONLY";
         default:            return "CALENDAR ERROR";
         }
     }
@@ -199,6 +202,9 @@ void ui_busy(unsigned char reason)
         break;
     case BUSY_CALS:
         scr_center(9, "READING CALENDARS...", 0);
+        break;
+    case BUSY_SAVE:
+        scr_center(9, "SAVING EVENT...", 0);
         break;
     default:
         scr_center(9, "FETCHING CALENDAR...", 0);
@@ -364,7 +370,7 @@ void ui_setup(void)
     scr_text(11, 1, "KEYS", 0);
     scr_text(12, 1, "1234 VIEWS   0 TODAY", 0);
     scr_text(13, 1, "<>  PERIOD   ENT OPEN", 0);
-    scr_text(14, 1, "R   REFRESH  Q   QUIT", 0);
+    scr_text(14, 1, "R RFRSH Q QUIT N NEW E EDIT", 0);
 
     ui_footer("1:CAL  <>:LEAD  BRK:SAVE");
 }
@@ -374,4 +380,86 @@ void ui_setup(void)
 void ui_setup_lead(void)
 {
     setup_lead();
+}
+
+/* ------------------------------------------------------------------ */
+/* Compose / edit form                                                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Sixteen rows carry seven fields, one hint and a message row, so the
+ * spacing is tighter than anyone else's. The active field is a full
+ * inverse bar -- the list's selection language -- with the cursor cell
+ * knocked back to normal video. compose.c owns the cursor and the
+ * horizontal scroll; the editor here is append-and-backspace (see
+ * input.c) and the echo is the 6847's uppercase set, which is also
+ * everything the wire will get from this keyboard.
+ */
+
+static const unsigned char frm_rows[FRM_NFIELDS] = { 2, 4, 5, 6, 8, 10, 12 };
+
+#define FRM_VAL_COL     7
+#define FRM_HINT_ROW    13
+#define FRM_MSG_ROW     14
+
+static const unsigned char frm_w[FRM_NFIELDS] = {
+    24, FRM_DATE_MAX + 1, FRM_TIME_MAX + 1, FRM_TIME_MAX + 1, 24, 24, 16
+};
+
+unsigned char ui_form_width(unsigned char f)
+{
+    return frm_w[f];
+}
+
+void ui_form(unsigned char editing)
+{
+    unsigned char f;
+
+    scr_clear();
+    logo_small(LOGO_ROW, LOGO_COL);
+    scr_text(0, HDR_TEXT_COL, editing ? "EDIT EVENT" : "NEW EVENT", 0);
+
+    /* One literal at a six-byte stride, not an array of pointers -- CMOC
+       initialises a static pointer array with run-time code per entry. */
+    for (f = 0; f < FRM_NFIELDS; f++)
+        scr_text(frm_rows[f], 1,
+                 "TITLE\0DATE\0\0START\0END\0\0\0WHERE\0NOTES\0CAT" + f * 6, 0);
+
+    scr_text(FRM_HINT_ROW, 1, "BLANK START = ALL DAY", 0);
+
+    ui_footer("ENT:NEXT  BRK:DONE");
+}
+
+void ui_form_row(unsigned char f, const char *win, unsigned char curx,
+                 unsigned char active)
+{
+    char b[2];
+
+    scr_field(frm_rows[f], FRM_VAL_COL, win, frm_w[f], active);
+
+    if (active) {
+        b[0] = curx < strlen(win) ? win[curx] : ' ';
+        b[1] = '\0';
+        scr_field(frm_rows[f], (unsigned char) (FRM_VAL_COL + curx), b, 1, 0);
+    }
+}
+
+void ui_form_msg(unsigned char msg)
+{
+    const char *s;
+
+    scr_row_clear(FRM_MSG_ROW);
+
+    /* A switch of literals, which CMOC stores as plain strings -- a static
+       table of pointers would cost run-time init code per entry. */
+    switch (msg) {
+    case FM_ASK:       s = "SAVE? (Y/N)";        break;
+    case FM_NEEDTITLE: s = "TITLE REQUIRED";     break;
+    case FM_BADDATE:   s = "DATE: YYYY-MM-DD";   break;
+    case FM_BADTIME:   s = "TIME: HH:MM";        break;
+    case FM_ENDALONE:  s = "END NEEDS A START";  break;
+    default:           return;                  /* FM_NONE: cleared above */
+    }
+
+    scr_center(FRM_MSG_ROW, s, 1);
 }
