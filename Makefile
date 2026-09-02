@@ -1,12 +1,24 @@
 PRODUCT = gcal
 PLATFORMS += adam
-PLATFORMS += apple2
 PLATFORMS += apple2enh
 PLATFORMS += atari
-PLATFORMS += c64
 PLATFORMS += coco
 PLATFORMS += msdos
-PLATFORMS += msxrom
+
+# This list is the backends that exist in src/, not the platforms mekkogx can
+# target. SRC_DIRS globs src/%PLATFORM% with $(wildcard), so a platform with no
+# directory does not fail the glob -- it compiles the portable core alone and
+# dies at the link with every plat_*/ui_* symbol unresolved. Three entries
+# inherited from the template did exactly that and have been dropped:
+#
+#   apple2   the unenhanced machine. src/apple2enh/ is not a backend it could
+#            share: screen.c drives 80STORE/HISCR and the alternate character
+#            set, and the chip column is MouseText. See the README.
+#   c64      PLATFORM_COMBOS expands it to src/commodore/, which does not exist
+#   msxrom   likewise src/msx/
+#
+# Add the entry back in the same commit that adds the directory, so that
+# `make` and `make release`, which build every name here, stay green.
 
 # adam_cpm is deliberately absent. PLATFORM_COMBOS below expands it to src/adam/
 # as well as src/adam_cpm/, so listing it would compile this backend's EOS and
@@ -17,7 +29,7 @@ PLATFORMS += msxrom
 # or 'make <platform>/<target>' for a platform-specific target.
 # Example shortcuts:
 #   make coco        → build for coco
-#   make apple2/disk → build the 'disk' target for apple2
+#   make apple2enh/disk → build the 'disk' target for apple2enh
 
 # SRC_DIRS may use the literal %PLATFORM% token.
 # It expands to the chosen PLATFORM plus any of its combos.
@@ -337,7 +349,7 @@ include mekkogx/toplevel-rules.mk
 #   coco/r2r:: coco/custom-step1
 #   coco/r2r:: coco/custom-step2
 # or
-#   apple2/disk: apple2/custom-step1 apple2/custom-step2
+#   apple2enh/disk: apple2enh/custom-step1 apple2enh/custom-step2
 
 # The MS-DOS disk is a bootless 360K FAT image (mformat lays no system
 # tracks -- SYS A: it from a DOS disk) carrying GCAL.EXE and the FujiNet

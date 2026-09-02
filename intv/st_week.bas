@@ -23,7 +23,6 @@
     CONST WK_CHIPS    = SCREEN_COLS - WK_CHIP_COL
 
     DIM wk_i, wk_d, wk_n, wk_cnt
-    DIM #wk_p
 
 lit_dow3:
     DATA 83,85,78, 77,79,78, 84,85,69, 87,69,68, 84,72,85, 70,82,73, 83,65,84
@@ -94,20 +93,20 @@ week_chips: PROCEDURE
     wk_cnt = 0
     IF ev_count = 0 THEN RETURN
     FOR wk_n = 0 TO ev_count - 1
-        #wk_p = SC_EVT + wk_n * EVT_STRIDE
-        IF (PEEK(#wk_p + EVT_DAY) AND 255) = wk_d THEN
+        #evrec = SC_EVT + wk_n * EVT_STRIDE
+        IF (PEEK(#evrec + EVT_DAY) AND 255) = wk_d THEN
             IF wk_cnt = 0 THEN
                 ' Gutter chip: the day's leading event. The adapter sorts by
                 ' start time, so the first match is the earliest.
                 s_col = CHIP_COL
-                vw_chipc = PEEK(#wk_p + EVT_COLOR) AND 255
-                vw_chipa = (PEEK(#wk_p + EVT_FLAGS) AND 255) AND EVF_ALLDAY
+                vw_chipc = PEEK(#evrec + EVT_COLOR) AND 255
+                vw_chipa = (PEEK(#evrec + EVT_FLAGS) AND 255) AND EVF_ALLDAY
                 GOSUB vw_chip
             END IF
             IF wk_cnt < WK_CHIPS THEN
                 s_col = WK_CHIP_COL + wk_cnt
-                vw_chipc = PEEK(#wk_p + EVT_COLOR) AND 255
-                vw_chipa = (PEEK(#wk_p + EVT_FLAGS) AND 255) AND EVF_ALLDAY
+                vw_chipc = PEEK(#evrec + EVT_COLOR) AND 255
+                vw_chipa = (PEEK(#evrec + EVT_FLAGS) AND 255) AND EVF_ALLDAY
                 GOSUB vw_chip
             END IF
             wk_cnt = wk_cnt + 1

@@ -23,7 +23,6 @@
 ' ag_i. A shared counter would be reset underneath the loop that owns it.
     DIM ag_i, ag_n, ag_row, ag_d, ag_m, ag_pd, ag_pm
     DIM ag_count, ag_try
-    DIM #ag_p
 
 lit_mon3:
     DATA 74,65,78, 70,69,66, 77,65,82, 65,80,82, 77,65,89, 74,85,78
@@ -43,9 +42,9 @@ agenda_build: PROCEDURE
     IF ev_count = 0 THEN RETURN
 
     FOR ag_i = 0 TO ev_count - 1
-        #ag_p = SC_EVT + ag_i * EVT_STRIDE
-        ag_d = PEEK(#ag_p + EVT_DAY) AND 255
-        ag_m = PEEK(#ag_p + EVT_MON) AND 255
+        #evrec = SC_EVT + ag_i * EVT_STRIDE
+        ag_d = PEEK(#evrec + EVT_DAY) AND 255
+        ag_m = PEEK(#evrec + EVT_MON) AND 255
 
         IF ag_d <> ag_pd OR ag_m <> ag_pm THEN
             IF ag_count < AGD_MAX THEN
@@ -91,7 +90,7 @@ agenda_draw: PROCEDURE
         ag_n = vw_first + ag_row
         s_row = ROW_FIRST + ag_row
         ag_i = PEEK(SC_AGD + ag_n * AGD_STRIDE + 1) AND 255
-        #ag_p = SC_EVT + ag_i * EVT_STRIDE
+        #evrec = SC_EVT + ag_i * EVT_STRIDE
 
         IF (PEEK(SC_AGD + ag_n * AGD_STRIDE) AND 255) = AGD_SEP THEN
             GOSUB agenda_sep
@@ -108,8 +107,8 @@ END
 
 ' agenda_sep: "28 AUG" in the dim colour, at the left edge.
 agenda_sep: PROCEDURE
-    ag_d = PEEK(#ag_p + EVT_DAY) AND 255
-    ag_m = PEEK(#ag_p + EVT_MON) AND 255
+    ag_d = PEEK(#evrec + EVT_DAY) AND 255
+    ag_m = PEEK(#evrec + EVT_MON) AND 255
     IF ag_m < 1 OR ag_m > 12 THEN ag_m = 1
     #BACKTAB(s_row * SCREEN_COLS + 1) = ((ag_d / 10) + 16) * 8 + COL_HILIGHT
     #BACKTAB(s_row * SCREEN_COLS + 2) = ((ag_d % 10) + 16) * 8 + COL_HILIGHT
@@ -122,13 +121,13 @@ END
 ' agenda_event: the same chip / time / title row the DAY view draws.
 agenda_event: PROCEDURE
     s_col = CHIP_COL
-    vw_chipc = PEEK(#ag_p + EVT_COLOR) AND 255
-    vw_chipa = (PEEK(#ag_p + EVT_FLAGS) AND 255) AND EVF_ALLDAY
+    vw_chipc = PEEK(#evrec + EVT_COLOR) AND 255
+    vw_chipa = (PEEK(#evrec + EVT_FLAGS) AND 255) AND EVF_ALLDAY
     GOSUB vw_chip
 
     s_col = TIME_COL : s_col_color = COL_NORMAL
-    vw_h = PEEK(#ag_p + EVT_SH) AND 255
-    vw_m = PEEK(#ag_p + EVT_SM) AND 255
+    vw_h = PEEK(#evrec + EVT_SH) AND 255
+    vw_m = PEEK(#evrec + EVT_SM) AND 255
     vw_alld = vw_chipa
     GOSUB vw_time
 

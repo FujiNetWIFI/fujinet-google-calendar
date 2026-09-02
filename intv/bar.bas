@@ -127,3 +127,53 @@ END
 bar_rearm: PROCEDURE
     #BACKTAB(ROW_HINT * SCREEN_COLS) = #BACKTAB(ROW_HINT * SCREEN_COLS) OR CS_ADVANCE
 END
+
+' ---------------------------------------------------------------------------
+' THE FORM'S BAR
+'
+' st_form.bas gets its own three routines rather than reusing bar_set/bar_clr,
+' for two reasons.
+'
+' First, ownership: those key off sel_row, which is the VIEW's selection and
+' has to survive a round trip through the form -- you edit the selected event
+' and come back to it. The form's selection is fm_sel.
+'
+' Second, geometry. The views put content on rows 3-9 with row 10 a permanent
+' blank spacer, so bar_set can end the selected run at column 0 of the NEXT
+' row. The form cannot: t9_entry owns rows 0-3, which puts the seven fields on
+' rows 4-10, and the last of them is therefore hard against the hint row --
+' whose own advance bit is already at (11,0). Ending the run at column 19 of
+' the SAME row instead sidesteps that collision without a special case, at the
+' cost of one column of bar. Both content runs then stay non-empty in every
+' position: row 3 is always above the bar, cell (selrow,19) always below it.
+'
+'   A1 (3, 0)               header   -> content   (row 3 is the T9 strip)
+'   A2 (FRM_ROW0+fm_sel, 1) content  -> selected
+'   A3 (FRM_ROW0+fm_sel,19) selected -> content
+'   A4 (ROW_HINT, 0)        content  -> header, wrapping 3->0
+'
+' The bar therefore spans columns 1-18.
+' ---------------------------------------------------------------------------
+frm_bar_set: PROCEDURE
+    bar_row = FRM_ROW0 + fm_sel
+    #BACKTAB(bar_row * SCREEN_COLS + 1) = #BACKTAB(bar_row * SCREEN_COLS + 1) OR CS_ADVANCE
+    #BACKTAB(bar_row * SCREEN_COLS + 19) = #BACKTAB(bar_row * SCREEN_COLS + 19) OR CS_ADVANCE
+END
+
+frm_bar_clr: PROCEDURE
+    bar_row = FRM_ROW0 + fm_sel
+    #BACKTAB(bar_row * SCREEN_COLS + 1) = #BACKTAB(bar_row * SCREEN_COLS + 1) AND $DFFF
+    #BACKTAB(bar_row * SCREEN_COLS + 19) = #BACKTAB(bar_row * SCREEN_COLS + 19) AND $DFFF
+END
+
+' frm_bar_apply: all four bits, for a form just drawn from scratch. frm_draw's
+' scr_clear is a CLS, which zeroes every BACKTAB word -- bit 13 included -- and
+' scr_puts/vw_puts_lit then write a bare card*8+colour over the top, so nothing
+' survives a repaint and the whole set has to go back down. The COUNT matters
+' as much as the positions: drop one and every row below it renders a stack
+' position out of phase.
+frm_bar_apply: PROCEDURE
+    #BACKTAB(T9_STRIP_ROW * SCREEN_COLS) = #BACKTAB(T9_STRIP_ROW * SCREEN_COLS) OR CS_ADVANCE
+    GOSUB frm_bar_set
+    #BACKTAB(ROW_HINT * SCREEN_COLS) = #BACKTAB(ROW_HINT * SCREEN_COLS) OR CS_ADVANCE
+END

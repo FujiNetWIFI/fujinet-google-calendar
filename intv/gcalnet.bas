@@ -70,6 +70,11 @@
     CONST GC_CATW    = 14
     CONST OPEN_MODE_DIR  = $06 ' ACCESS_MODE::DIRECTORY
     CONST OPEN_MODE_READ = $04 ' ACCESS_MODE::READ
+' ACCESS_MODE::WRITE opens a DRAFT channel: field lines go out with net_write
+' and the adapter commits the event when the channel CLOSES. A selector-only
+' spec composes; the listing's own spec plus /N edits that event. aux2 is
+' ignored. See st_form.bas.
+    CONST OPEN_MODE_WRITE = $08
 
 ' Adapter status codes worth telling apart (status_error_codes.h).
     CONST NS_SUCCESS       = 1
@@ -77,6 +82,12 @@
     CONST NS_BAD_SPEC      = 165
     CONST NS_ACCESS_DENIED = 167
     CONST NS_NOT_FOUND     = 170
+' Write-channel verdicts, latched by close() and read by the STATUS that
+' follows it. EVERY draft rejection reason -- bad time, missing summary, end
+' before start, all-day/timed mismatch -- arrives as INVALID_COMMAND, which is
+' why st_form.bas validates before it sends.
+    CONST NS_BAD_COMMAND   = 132
+    CONST NS_NOT_AUTH      = 212
 
 ' Every DIM ahead of the first PROCEDURE.
     DIM gc_numw, gc_datew, gc_used, gc_timec, gc_catc, gc_titlec

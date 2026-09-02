@@ -21,7 +21,10 @@
 ' Words longer than 20 characters (rare: URLs) are hard-split at column 20.
 
     DIM w_rows, w_row, w_col, w_len, w_i
-    DIM #w_src, #w_dst, #w_c
+    DIM #w_src, #w_dst
+' w_c is 8-bit: it only ever holds one PEEKed byte, tested against 0
+' and 32. It was 16-bit, and that pool is now the scarce one.
+    DIM w_c
 
 wrap_text: PROCEDURE
     w_row = 0
@@ -35,15 +38,15 @@ wt_word:
     WHILE (PEEK(#w_src) AND 255) = 32
         #w_src = #w_src + 1
     WEND
-    #w_c = PEEK(#w_src) AND 255
-    IF #w_c = 0 THEN GOTO wt_done
+    w_c = PEEK(#w_src) AND 255
+    IF w_c = 0 THEN GOTO wt_done
 
     ' Measure the word (chars up to the next space or NUL).
     w_len = 0
 wt_meas:
-    #w_c = PEEK(#w_src + w_len) AND 255
-    IF #w_c = 0 THEN GOTO wt_meas_done
-    IF #w_c = 32 THEN GOTO wt_meas_done
+    w_c = PEEK(#w_src + w_len) AND 255
+    IF w_c = 0 THEN GOTO wt_meas_done
+    IF w_c = 32 THEN GOTO wt_meas_done
     w_len = w_len + 1
     GOTO wt_meas
 wt_meas_done:

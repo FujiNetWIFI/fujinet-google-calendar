@@ -11,7 +11,6 @@
 ' it -- the same reason the file browser puts its file-type glyph there.
 
     DIM dy_i, dy_row, dy_n
-    DIM #dy_p
 
 ' ---------------------------------------------------------------------------
 ' day_draw: paint rows 3-9 from SC_EVT, starting at vw_first. Sets num_rows to
@@ -32,16 +31,16 @@ day_draw: PROCEDURE
     FOR dy_i = 0 TO num_rows - 1
         dy_n = vw_first + dy_i
         dy_row = ROW_FIRST + dy_i
-        #dy_p = SC_EVT + dy_n * EVT_STRIDE
+        #evrec = SC_EVT + dy_n * EVT_STRIDE
 
         s_row = dy_row : s_col = CHIP_COL
-        vw_chipc = PEEK(#dy_p + EVT_COLOR) AND 255
-        vw_chipa = (PEEK(#dy_p + EVT_FLAGS) AND 255) AND EVF_ALLDAY
+        vw_chipc = PEEK(#evrec + EVT_COLOR) AND 255
+        vw_chipa = (PEEK(#evrec + EVT_FLAGS) AND 255) AND EVF_ALLDAY
         GOSUB vw_chip
 
         s_col = TIME_COL : s_col_color = COL_NORMAL
-        vw_h = PEEK(#dy_p + EVT_SH) AND 255
-        vw_m = PEEK(#dy_p + EVT_SM) AND 255
+        vw_h = PEEK(#evrec + EVT_SH) AND 255
+        vw_m = PEEK(#evrec + EVT_SM) AND 255
         vw_alld = vw_chipa
         GOSUB vw_time
 

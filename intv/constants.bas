@@ -3,9 +3,10 @@
 '
 ' THE RAM BUDGET RULE
 '
-' IntyBASIC gives this program 228 bytes of 8-bit scratchpad variables (222
-' once CONT.KEY is used, which costs 6) and 47 16-bit variables, and NO string
-' type at all. NEVER buffer tabular data -- event rows, calendar names, titles
+' IntyBASIC gives this program 228 bytes of 8-bit scratchpad variables and 47
+' 16-bit variables, and NO string type at all. It used to be 222 of the 8-bit
+' ones: CONT.KEY costs 6, and input.bas decodes the keypad from the raw byte
+' itself now, so those came back. NEVER buffer tabular data -- event rows, calendar names, titles
 ' -- in DIM'd variables. A fetched page is parsed straight out of the mailbox
 ' RX window (FN_RX) as each 512-byte reply lands, and only the compact fields
 ' the views actually draw are kept, in the SC_* block below: ordinary cart RAM
@@ -117,21 +118,28 @@
     CONST KEYPAD_NONE  = 12
 
 ' ---------------------------------------------------------------------------
-' Character-grid text entry (input.bas)
+' Text entry (screen.bas value window + t9.bas).
+'
+' The GRID_* block that used to sit here is gone. It described the 6x16
+' character grid this app inherited from fujinet-config and never called; t9.bas
+' is the editor now, and it needs three constants rather than fourteen.
+'
+' The value window is the top three rows, tail-anchored, so what is on screen is
+' always where the typing is. t9.bas also owns row 3 (the candidate strip) and
+' row 11 (hints + the T9/ABC indicator) while it is running, and touches nothing
+' between -- which is exactly the seven rows st_form.bas puts its fields on.
 ' ---------------------------------------------------------------------------
-    CONST GRID_VALUE_ROW  = 1
-    CONST GRID_PANEL_ROW  = 3
-    CONST GRID_ROW0       = 4
-    CONST GRID_COL0       = 2
-    CONST GRID_ROWS       = 6
-    CONST GRID_COLS       = 16
-    CONST GRID_ACTION_ROW = 11
-    CONST GRID_ACT_COL0   = 2
-    CONST GRID_ACT_COL1   = 7
-    CONST GRID_ACT_COL2   = 12
-    CONST GRID_ACT_COL3   = 17
-    CONST GRID_MOB_X0     = 8
-    CONST GRID_MOB_Y0     = 8
+    CONST VAL_ROW0        = 0
+    CONST VAL_ROWS        = 3
+    CONST VAL_CELLS       = 60    ' VAL_ROWS * SCREEN_COLS
+
+' These two live here rather than in the files that own them, t9.bas and
+' st_form.bas, because bar.bas reads both and comes many INCLUDEs earlier --
+' and a CONST used before its definition does not fail, it silently reads as
+' zero. FRM_ROW0 = VAL_ROWS + 1 is not a coincidence: the fields start on the
+' first row the editor does not own.
+    CONST T9_STRIP_ROW    = 3     ' t9.bas's candidate strip
+    CONST FRM_ROW0        = 4     ' st_form.bas's first field row
 
 ' ---------------------------------------------------------------------------
 ' Common view layout.
@@ -164,12 +172,37 @@
     CONST TITLE_W   = SCREEN_COLS - TITLE_COL
 
 ' ---------------------------------------------------------------------------
-' Scratch RAM map, $8000-$9BFF (declared "+RWN" by fujinet.bas's one MEMATTR).
+' Scratch RAM map, $8040-$9BFF (declared "+RWN" by fujinet.bas's one MEMATTR).
 '
 ' Never widen that MEMATTR past $9BFF. jzIntv's --fujinet peripheral registers
 ' its own handler for $9C00-$9F3F and whichever peripheral registered first
 ' answers a given address, so declaring the mailbox range as cart RAM shadows
 ' the emulated FujiNet with inert RAM and the mailbox never comes up.
+'
+' AND THE MAP STARTS AT $8040, NOT $8000. The STIC decodes its control
+' registers at $0000-$003F and MIRRORS them at $4000, $8000 and $C000 -- on
+' real hardware, and in jzIntv, which registers "STIC (alias)" over
+' $8000-$803F in cfg.c. A write to cart RAM down there lands in the RAM AND in
+' the STIC, so the first 64 bytes of this map are really the register file:
+'
+'   $8000-$8017  MOB x / y / attribute     rewritten by the ISR every frame
+'   $8018-$801F  collision registers       read back as phantom collisions
+'   $8020-$8021  display enable / mode     rewritten by the ISR every frame
+'   $8028-$802B  THE COLOUR STACK          written only by MODE
+'   $802C, $8032 border colour / mask      rewritten by the ISR every frame
+'   $8030-$8031  scroll x / y              never rewritten (no SCROLL here)
+'
+' Only the colour stack and the scroll offsets are not repaired every frame,
+' and the colour stack is the one that shows. SC_EVT used to start at $8000,
+' which put event record 2's EVT_NUMLO -- the adapter's event number, so 3 for
+' the third event of any listing -- onto $8028, colour stack entry 0. Rows 0-2
+' and the hint row run on entry 0 (bar.bas), so the header and the footer
+' turned CS_TAN (3) the moment a fetch returned three events or more, and
+' COL_HEAD is CS_TAN, so the column headings vanished into it. Nothing was
+' wrong with the drawing code and nothing failed; the STIC had simply been
+' handed an event number as a colour.
+'
+' `make check` fails the build if any SC_* lands below $8040.
 ' ---------------------------------------------------------------------------
 ' 96 events with 31-character titles, rather than more events with shorter
 ' ones: the DAY view shows a 13-column title window and bounce-scrolls the
@@ -178,12 +211,29 @@
 ' not store events at all (see SC_DAYS), and AGENDA defaults to 20.
     CONST MAX_EVENTS = 96
 
-    CONST SC_EVT    = $8000   ' 1536  parsed event index, EVT_STRIDE x MAX_EVENTS
-    CONST SC_TITLE  = $8600   ' 3072  event titles, TITLE_STRIDE x MAX_EVENTS
-    CONST SC_CAL    = $9200   '   64  selected calendar selector, NUL-terminated
-    CONST SC_DAYS   = $9240   '   42  month grid: per-day event count
-    CONST SC_DCOL   = $9270   '   42  month grid: per-day dominant colour
-    '     $92A0-$939F  256  reserved
+    CONST SC_EVT    = $8040   ' 1536  parsed event index, EVT_STRIDE x MAX_EVENTS
+    CONST SC_TITLE  = $8640   ' 3072  event titles, TITLE_STRIDE x MAX_EVENTS
+    CONST SC_CAL    = $9240   '   64  selected calendar selector, NUL-terminated
+    CONST SC_DAYS   = $9280   '   42  month grid: per-day event count
+    CONST SC_DCOL   = $92B0   '   42  month grid: per-day dominant colour
+' Text entry's own scratch. SC_T9_* belong to t9.bas and are declared here
+' rather than in it because SC_INJECT has to be visible to input.bas, which is
+' included first -- and a CONST referenced before the file that declares it is
+' silently read as zero rather than diagnosed. Keeping all three together also
+' keeps the map below honest.
+'
+' SC_INJECT is the scripted-input hook (see input.bas): two magic bytes, then a
+' keypad value, a disc value and a button flag that override what in_poll
+' DECODED, then a sixth byte that replaces the raw controller byte BEFORE it
+' decodes anything. The sixth is the one worth having -- overriding decoded
+' values skips in_poll's own logic, which is how the keypad/disc aliasing bug
+' got past a green test suite.
+'
+' It is not t9-specific any more: moving it out of t9_poll and into in_poll is
+' what makes every screen scriptable, the form and the views included.
+    CONST SC_T9_STACK  = $92E0   ' range stack, 16 levels x 4 bytes
+    CONST SC_T9_DIGITS = $9320   ' typed digit sequence, 16 bytes
+    CONST SC_INJECT    = $9390   ' test-harness input injection, 6 bytes
     CONST SC_EDIT   = $93A0   '  256  flattened detail text / timezone readout
     CONST SC_ENTRY  = $94A0   '  128  bounce-scroll source (scroll.bas hardcodes this)
 ' NOT SC_HOLD. IntyBASIC folds names to upper case, so a constant called
@@ -194,6 +244,16 @@
 ' sc_hold, sc_idle, sc_active.
     CONST SC_LINEBUF = $9520  '  128  partial line carried across a 512-byte read
     CONST SC_DETAIL = $95A0   '  512  event detail, wrapped to 21-byte rows
+' The compose/edit form parks on top of SC_DETAIL. The two are never live at
+' once -- opening the form leaves the detail screen, and returning from it
+' redraws -- and this is the same overlay the C clients use on their tight
+' targets (GC_FORM_OVERLAY, src/gcal.h). 313 of the 512 bytes are used:
+'     +0    209  the seven fields, at st_form.bas's frm_off offsets
+'     +209    7  one dirty flag per field
+'     +216   97  a snapshot of the field being edited, for change detection
+    CONST SC_FORM   = SC_DETAIL
+    CONST SC_FDIRTY = SC_DETAIL + 209
+    CONST SC_FSNAP  = SC_DETAIL + 216
     CONST SC_LIST   = $97A0   '  640  calendar picker: names + selectors
     CONST SC_AGD    = $9A20   '  384  AGENDA display list, 2 B x 192
     CONST SC_HDR    = $9BA0   '   32  window title from the adapter's line 0
@@ -276,6 +336,22 @@
     CONST ST_VIEW   = 2       ' whichever of the four views cur_view names
     CONST ST_EVENT  = 3       ' event detail
     CONST ST_SETUP  = 4       ' alarm lead / timezone readout
+    CONST ST_FORM   = 5       ' compose / edit an event
+
+' #evrec: a pointer to one SC_EVT record, shared by every screen that walks
+' the event array -- st_day, st_week, st_agenda, st_event and alarm.bas each
+' had their own (#dy_p/#wk_p/#ag_p/#ev_p/#al_p), which cost five of the 47
+' 16-bit slots to say the same thing five times. t9.bas needs eleven of them,
+' so they were merged.
+'
+' The rule that makes this safe, and the rule to keep: #evrec belongs to
+' whichever screen is currently drawing, and is never live across a state
+' change. The four views are mutually exclusive states, and al_scan runs from
+' the main loop AFTER `ON state GOSUB` has returned, never nested inside a
+' draw -- so no two of the old five were ever live at once. st_pick's #pk_p is
+' deliberately NOT folded in: it points into SC_LIST, not SC_EVT, and it stays
+' live across the picker's fetch loop.
+    DIM #evrec
 
 ' ---------------------------------------------------------------------------
 ' Google's eleven event colours, mapped onto the Intellivision's sixteen.
@@ -328,8 +404,21 @@ lit_colvals:
 ' fails to compile a DIM of a name another INCLUDE already referenced.
 ' ---------------------------------------------------------------------------
     DIM state, cur_view, sel_row, vid_now, vid_want
+' fm_sel is st_form.bas's selection, but bar.bas's frm_bar_* routines key off
+' it and bar.bas is INCLUDEd first -- a name used ahead of its DIM is
+' auto-created and the real DIM then fails, so it is declared here.
+    DIM fm_sel
     DIM num_rows, ev_count, gc_trunc, ev_sel
     ' The date the current view is anchored on. The year needs 16 bits; month
     ' and day do not.
     DIM #cur_y
     DIM cur_mo, cur_d
+' al_active belongs to alarm.bas and #ev_num to st_event.bas, but both are read
+' by files that come EARLIER in the include order -- st_view.bas tests
+' al_active to decide whether the banner is up, and st_form.bas needs the
+' adapter's event number to build an edit URL. A name used before its own file
+' DIMs it is auto-created at first use, and the real DIM then fails with
+' "already defined". The build carried that error for al_active before compose
+' was added; it is fixed here rather than reproduced.
+    DIM al_active
+    DIM #ev_num

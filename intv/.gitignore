@@ -3,3 +3,9 @@
 *.cfg
 *.rom
 *.lst
+*.sym
+# Generated at build time by tools/mkdict.py from the word lists.
+t9dict.bas
+.dictstamp-*
+wordlist/gcal-t9.txt
+__pycache__/

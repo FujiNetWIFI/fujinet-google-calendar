@@ -60,10 +60,55 @@
 ' deliberate keypress go out of line.
 ' ---------------------------------------------------------------------------
     ASM ORG $D000
-    INCLUDE "st_week.bas"
     INCLUDE "st_month.bas"
     INCLUDE "st_agenda.bas"
     INCLUDE "alarm.bas"         ' AL_* CONSTs st_pick.bas reads
+
+' ---------------------------------------------------------------------------
+' $A000-$B7FF, the fourth segment, added for compose/edit.
+'
+' The three above were all this app used, and the Makefile still refuses any
+' others -- but text entry does not fit in what they had left (about 2K words,
+' against ~4K of editor and form plus a dictionary). $A000 is a normal cart ROM
+' area and is served on the FujiNet cartridge.
+'
+' $B800-$BFFF is NOT usable and must stay empty: GRAM is aliased there on the
+' Intellivision bus, so ROM placed at $B800 is simply not what reads back.
+' mkdict.py takes the pool ceiling as an argument for that reason, and
+' `make check` fails the build if anything lands at $B800 or above.
+'
+' Order inside the segment: code first at $A000, then the dictionary's letter
+' pool at $B000 (T9D_CHARS). $B000 is a fixed address rather than "wherever the
+' code ended" because t9.bas has to PEEK the pool through a CONST -- see its
+' header -- so the boundary is declared, and overrunning it is what make check
+' is for.
+' ---------------------------------------------------------------------------
+    ASM ORG $A000
+    INCLUDE "t9.bas"            ' T9 predictive text entry
+    INCLUDE "st_form.bas"       ' the compose/edit form
+' st_week.bas is here rather than up in $D000 with the other three cold views,
+' purely to balance the two halves of the dictionary. The pool needs ~2.5 words
+' per entry and the index needs 1, so they want different-sized holes; moving
+' one ~430-word module across moved the binding constraint and bought about
+' seventy more dictionary entries. Its WK_* constants are read only by itself,
+' so its position in the include order does not matter -- which is the only
+' reason it, and not one of its neighbours, is the one that moved.
+    INCLUDE "st_week.bas"
+
+' The generated dictionary. It carries its own ASM ORGs -- pool at $B000,
+' meta+index into the tail of $D000 -- so it must be followed by an explicit
+' ORG, never by bare code. That is the whole of the experiment's "INCLUDE it
+' LAST" rule: what actually matters is that nothing is assembled after it at
+' an address it chose.
+'
+' It is NOT last here, and deliberately so. IntyBASIC appends its runtime
+' epilogue after the whole program, wherever the final ORG left the assembler
+' -- and that epilogue is 1345 words, not the few hundred one might assume.
+' Left at the end, it followed the index into $D000 and pushed the segment
+' 432 words into $E000, which this cartridge does not boot from. Putting the
+' last code block after the dictionary parks the epilogue back in $F000's
+' tail, where it has always lived.
+    INCLUDE "t9dict.bas"
 
     ASM ORG $F000
     INCLUDE "st_event.bas"
@@ -76,6 +121,11 @@ gc_start:
     ' Cart RAM comes up undefined, so nothing may be read before it is written.
     POKE SC_CAL, 0
     POKE SC_HDR, 0
+    ' in_poll reads SC_INJECT every frame looking for a two-byte magic that arms
+    ' its scripted-input hook. Undefined cart RAM spelling it is a 1-in-65536
+    ' shot; clearing it once costs nothing and removes the question.
+    POKE SC_INJECT, 0
+    #fn_tmo = FN_TMO_DEF
 
     MODE 0, CS_BLACK, CS_BLACK, CS_BLACK, CS_BLACK
     BORDER CS_BLACK
@@ -137,8 +187,16 @@ gc_main:
     ' the new palette for a frame. MODE lands on the NEXT frame and borrows the
     ' colour variable to carry its arguments until then, so no PRINT ... COLOR
     ' may run until after the WAIT inside these.
+    ' ST_FORM shares the views' stack, not the other screens' all-black one:
+    ' its selected-field bar IS colour-stack entry 2, so it cannot exist on a
+    ' profile whose four entries are all black. That also makes ST_VIEW <->
+    ' ST_FORM stop being a profile change -- nothing depended on the scr_clear
+    ' and the shown-flag reset below, because frm_new/frm_edit_event already
+    ' zero fm_shown, frm_draw does its own scr_clear, and do_form zeroes
+    ' vw_shown on the way out.
     vid_want = 1
     IF state = ST_VIEW THEN vid_want = 0
+    IF state = ST_FORM THEN vid_want = 0
     IF vid_want <> vid_now THEN
         vid_now = vid_want
         GOSUB scr_clear
@@ -154,9 +212,10 @@ gc_main:
         ev_shown = 0
         pk_shown = 0
         su_shown = 0
+        fm_shown = 0
     END IF
 
-    ON state GOSUB do_idle, do_pick, do_view, do_event, do_setup
+    ON state GOSUB do_idle, do_pick, do_view, do_event, do_setup, do_form
 
     GOSUB al_scan
 
