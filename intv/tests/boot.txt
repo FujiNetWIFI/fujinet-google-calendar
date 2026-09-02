@@ -1,0 +1,19 @@
+# boot.txt -- the cart boots and reaches its first FujiNet call.
+#
+# This is the test that guards the memory map. Compose/edit added $A000-$B7FF
+# as a fourth ROM window and split the dictionary across two more ORGs, and the
+# failure mode for getting any of that wrong is not a crash: IntyBASIC and
+# as1600 both accept it, and the cart simply fails EXEC's boot detection, with
+# the PC landing in unprogrammed GROM a couple of instructions in. A screen
+# with the title on it proves the EXEC handed control to the cartridge and that
+# gcal's own code ran.
+#
+# fn_wait_mailbox is the breakpoint because it is reached exactly once, early,
+# with the title already drawn -- and because without a FujiNet the very next
+# thing this ROM does is give up and spin in gc_halt, where no per-frame
+# breakpoint is reachable and the driver would block until its timeout.
+bp label_FN_WAIT_MAILBOX
+hit
+snap
+expect 0 GOOGLE CALENDAR
+expect 2 CONNECTING TO FUJI

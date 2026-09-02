@@ -1,0 +1,67 @@
+# t9btn.txt -- a keypad press must not read as an action button.
+#
+# The third face of the keypad/disc aliasing, and the one that made typing
+# impossible. The disc half (keypad.txt, t9keypad.txt) is about bits 0-4; this
+# is about bits 5-7. A key grounds ONE row line and a button grounds TWO, so
+# two keys from different rows OR into a byte whose row bits are exactly a
+# button's -- 48 of the 66 key pairs do:
+#
+#   4 ($82) + 6 ($22) = $A2, whose row bits are $A0, which is B0
+#
+# and that is not a stunt, it is a finger rolling off one key onto the next
+# while typing. t9.bas has the T9/ABC toggle on the button, so each ghost
+# committed the pending word and flipped the mode, and the next digit landed in
+# the mode it had just been flipped into: 6338464 typed with four frames of
+# overlap gave "offtimi" instead of "meeting".
+#
+# THE FIRST VERSION OF THIS TEST PASSED AGAINST THE BROKEN ROM. It injected the
+# ghosts with `raw`, which is a ONE-FRAME press, so the three-frame confirm
+# rejected them for a reason that had nothing to do with their being ghosts --
+# and it used $C0 and $60, which are not ghosts at all but the bare button
+# bytes. A ghost has to be spelled with the column bits it really carries, and
+# HELD past the confirm window -- which is what a finger doing this does.
+#
+# `btn` cannot reproduce any of this -- it injects in_btn post-decode. Only raw.
+bp label_IN_POLL
+hit
+key 5
+btn
+# 4663 -> "home", the same stable two-candidate prefix t9keypad.txt uses.
+key 4
+key 6
+key 6
+key 3
+snap
+expect 0 home
+expect 11 T9
+# The form's field list is still underneath, with the bar on the row being
+# typed into -- TITLE, row 4.
+expect 4 TITLE
+expect-bar 4
+
+# $A2 is keypad 4 and keypad 6 held together, for ten frames -- three times the
+# confirm window. It must change nothing: not the mode, not the buffer.
+rawhold A2 10
+wait 4
+snap
+expect 0 home
+expect 11 T9
+expect-not 11 ABC
+# $C1 is 1+2 and $65 is 3+8. Same trap, same rule, the other two patterns.
+rawhold C1 10
+wait 4
+rawhold 65 10
+wait 4
+snap
+expect 0 home
+expect 11 T9
+expect-not 11 ABC
+
+# ...and the fix has to discriminate, not disable. Held past the three-frame
+# confirm, a real B0 -- $A0, nothing in bits 0-4 -- still toggles to ABC. That
+# is the counterpart of keypad.txt's closing "a real disc RIGHT still steps the
+# period".
+rawhold A0 5
+wait 6
+snap
+expect 11 ABC

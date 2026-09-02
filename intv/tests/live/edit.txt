@@ -1,0 +1,17 @@
+bp label_IN_POLL
+hit
+disc down
+key 6
+snap
+disc down
+disc down
+btn
+key 0
+key 5
+key 0
+key 6
+key 11
+snap
+key 11
+wait 30
+snap

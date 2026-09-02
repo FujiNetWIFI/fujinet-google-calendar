@@ -1,0 +1,33 @@
+# t9.txt -- T9 predictive entry into the title field.
+#
+# 6338464 is m-e-e-t-i-n-g. Getting "meeting" out of it proves the dictionary
+# landed where t9.bas points, that the binary search narrows correctly, and
+# that the pending word REPLACES rather than appends -- an early version of the
+# punctuation fix committed on every digit and produced
+# "nofoffmeetmeetimeetinmeeting".
+bp label_IN_POLL
+hit
+key 5
+btn
+key 6
+key 3
+key 3
+key 8
+key 4
+key 6
+key 4
+snap
+expect 0 meeting
+expect-not 0 meetmeet
+# The candidate strip: one exact match, truncated to the slot width.
+expect 3 1/1
+# Rows 4-10 belong to the form and t9_entry must not touch them.
+expect 5 DATE
+expect 10 CAT
+key 11
+snap
+# ENTER accepts the field and returns to the form -- it must NOT fall through
+# to the form's own save. It did once: in_key is global and survived the
+# return, so accepting a title silently sent the draft.
+expect 0 NEW EVENT
+expect 4 meeting

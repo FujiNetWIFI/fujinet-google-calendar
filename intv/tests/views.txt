@@ -1,0 +1,27 @@
+# views.txt -- the four views still render.
+#
+# This guards the #evrec merge. st_day, st_week, st_agenda, st_event and
+# alarm.bas each used to own a 16-bit pointer into SC_EVT; compose needed the
+# slots, so all five now share one. That is safe only because no two of them
+# are ever live at once, and this is what checks the claim -- a view that had
+# its pointer clobbered draws blank rows or the wrong event's colour, not an
+# error.
+bp label_IN_POLL
+hit
+key 2
+wait 40
+snap
+expect 0 WEEK OF
+expect 2 DAY
+key 3
+wait 40
+snap
+expect 2 SU MO TU WE TH FR SA
+key 4
+wait 40
+snap
+expect 0 AGENDA FROM
+expect 2 UPCOMING
+# The agenda interleaves date separators into its display list, which is why
+# vw_sel_event exists; a separator row is a date, not an event.
+expect 3 SEP

@@ -1,0 +1,37 @@
+# t9keypad.txt -- a letter key must not cycle the candidate list.
+#
+# The other half of the keypad/disc aliasing (see keypad.txt), and the half
+# that would have made T9 unusable on hardware: inside the editor the disc
+# cycles between matching words, and EVERY letter key also reads as a disc
+# direction. Typing a word would have walked the candidate list underneath it.
+#
+# 4663 matches two words in this dictionary, "home" then "good", so a spurious
+# disc event is visible: it would show the second one.
+bp label_IN_POLL
+hit
+key 5
+btn
+key 4
+key 6
+key 6
+key 3
+snap
+expect 0 home
+expect 3 1/2
+# $44 is keypad 8. Ungated it reads as bit 2 -- DISC_UP -- and cycles.
+raw 44
+wait 10
+snap
+expect 0 home
+expect-not 0 good
+# $82 is keypad 4: bit 1, which the disc ignores in the editor, but prove it
+# anyway since the gate is what is under test.
+raw 82
+wait 10
+snap
+expect 0 home
+# A real disc DOWN, with no row bits, still cycles.
+raw 01
+wait 10
+snap
+expect 0 good

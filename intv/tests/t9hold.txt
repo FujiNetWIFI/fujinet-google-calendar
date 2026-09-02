@@ -1,0 +1,45 @@
+# t9hold.txt -- a key that is still down must not swallow the next one.
+#
+# A keypad key grounds one row line (bits 5-7) and one column line (bits 0-3),
+# so two keys held together OR into a byte that is not any key. IntyBASIC's
+# CONT.KEY matches the WHOLE byte against the twelve patterns, so it decodes
+# that as nothing -- and the instant the second key is released the byte is the
+# first key again, which it decodes as a FRESH PRESS of the first key.
+#
+# One key that stays down therefore makes every later key read as that first
+# key. Typing "test" (8 3 7 8) with 8 still held gave `t`, then `v` -- a second
+# 8, not the 3 -- and then a red flash on everything, because no word continues
+# "88". Space, ENTER and CLEAR were dead the same way: all arriving as 8.
+#
+# in_poll decodes the bits that were ADDED since the last confirmed byte
+# instead, which is how a matrix is meant to be read. That is what this pins.
+bp label_IN_POLL
+hit
+key 5
+btn
+
+# 8 goes down and STAYS down for the rest of the scenario.
+rawhold 44 6
+snap
+expect 0 t
+
+# 3 pressed on top of it: $44 | $21 = $65. The added bits are $21, which is 3,
+# so this must read as 3 and give "te" -- not as a second 8 giving "tv".
+rawhold 65 6
+snap
+expect 0 te
+expect-not 0 tv
+
+# Releasing 3 goes $65 -> $44, which adds nothing. The held 8 must NOT re-fire:
+# the buffer stays "te", and the candidate strip stays on the same word.
+rawhold 44 8
+snap
+expect 0 te
+expect-not 0 tev
+expect-not 0 tv
+
+# And with nothing held, a plain press still decodes normally.
+rawhold 00 6
+rawhold 21 6
+snap
+expect 0 tee
