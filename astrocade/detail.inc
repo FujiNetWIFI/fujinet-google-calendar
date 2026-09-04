@@ -6,15 +6,16 @@
 ; broken at word boundaries. Eleven rows a page (2-12). A page turn
 ; re-opens the detail and skips whole pages of wrapped lines, riding the
 ; adapter's 120-second window cache, so there is one code path and no
-; carry state between pages.
+; carry state between pages. Down off the end lands on an empty page and
+; backs itself up, so the last page is sticky.
 
 DETPG   EQU     11              ; wrapped lines per page
 
-; DETAIL: show the event numbered DEVNUM. One screenful (11 wrapped rows);
-; the source is wrapped at 80, so all but the longest events fit. Returns
-; when the user backs out; carry set if they chose to edit it. Paging was
-; dropped for ROM budget -- see astrocade/README.md.
-DETAIL: LD      A,2             ; REQTYP: detail read
+; DETAIL: show the event numbered DEVNUM, paged with up/down. Returns when
+; the user backs out; carry set if they chose to edit it.
+DETAIL: XOR     A
+        LD      (DPAGE),A
+DETGO:  LD      A,2             ; REQTYP: detail read
         CALL    GCFETCH
         JP      C,DTERR
         CALL    CHROME
@@ -24,11 +25,29 @@ DETAIL: LD      A,2             ; REQTYP: detail read
         LD      E,3
         LD      C,XKONA
         CALL    TXTAT
-        LD      C,2             ; screen row
+        LD      A,(DPAGE)       ; skip DPAGE whole pages of wrapped lines
+        OR      A
+        JR      Z,DTD0
+        LD      B,A
+DTSK1:  PUSH    BC
+        LD      B,DETPG
+DTSK2:  PUSH    BC
+        CALL    DWRAP
+        POP     BC
+        JR      C,DTSKX         ; exhausted mid-skip: past the end
+        DJNZ    DTSK2
+        POP     BC
+        DJNZ    DTSK1
+        JR      DTD0
+DTSKX:  POP     BC
+        LD      HL,DPAGE
+        DEC     (HL)
+        JR      DETGO
+DTD0:   LD      C,2             ; screen row
 DTD1:   PUSH    BC
         CALL    DWRAP
         POP     BC
-        JR      C,DTHINT
+        JR      C,DTD2
         LD      D,C
         LD      E,0
         PUSH    BC
@@ -40,11 +59,24 @@ DTD1:   PUSH    BC
         LD      A,C
         CP      2+DETPG
         JR      C,DTD1
+DTD2:   LD      A,C             ; an empty page past the end: back up
+        CP      2
+        JR      NZ,DTHINT
+        LD      A,(DPAGE)
+        OR      A
+        JR      Z,DTHINT
+        DEC     A
+        LD      (DPAGE),A
+        JP      DETGO
 DTHINT: LD      HL,SDETHT
         CALL    MSGROW
 DTKEY:  CALL    INWAIT
         CP      EVD0+6          ; '6': edit
         JR      Z,DTEDIT
+        CP      EVDOWN
+        JR      Z,DTPGDN
+        CP      EVUP
+        JR      Z,DTPGUP
         CP      EVCE
         JR      Z,DTBACK
         CP      EVCLR
@@ -52,6 +84,15 @@ DTKEY:  CALL    INWAIT
         CP      EVTRIG
         JR      Z,DTBACK
         JR      DTKEY
+DTPGDN: LD      HL,DPAGE
+        INC     (HL)
+        JP      DETGO
+DTPGUP: LD      A,(DPAGE)
+        OR      A
+        JR      Z,DTKEY
+        DEC     A
+        LD      (DPAGE),A
+        JP      DETGO
 DTBACK: OR      A               ; carry clear: just backed out
         RET
 DTEDIT: SCF                     ; carry set: the caller opens the form
@@ -91,4 +132,4 @@ DWEOF:  LD      A,C
 DWEOF0: SCF
         RET
 
-SDETHT: DB      "6 EDIT   C BACK",0
+SDETHT: DB      "6 EDIT  ^v PAGE  C BACK",0

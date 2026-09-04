@@ -12,14 +12,15 @@ as you use it.
 This is the third implementation in this repository, beside the C core
 (`src/`) and the IntyBASIC one (`intv/`). It is hand-written Z80 assembly
 (zmac), because the Astrocade has 4 KB of RAM total — all of it screen RAM —
-and a cartridge whose usable half is 6,912 bytes, so the portable C core
-does not fit. Like `intv/`, it is standalone: its own `build.sh`, outside the
-mekkogx/defoogi build.
+and an 8K cartridge window, so the portable C core does not fit. The image
+is a 20K **banked** cart for the protocol-v2 FujiNet cartridge (see "The
+banked cartridge" below). Like `intv/`, it is standalone: its own
+`build.sh`, outside the mekkogx/defoogi build.
 
 ## Building and running
 
 ```
-./build.sh                 # -> build/gcal.bin (exactly 8192 bytes)
+./build.sh                 # -> build/gcal.bin (a 20K banked APPBANK image)
 DEMO=1 ./build.sh          # static mock screens, no FujiNet needed
 ./run.sh                   # MAME against a live fujinet-pc
 make demoshot              # headless screenshots of the DEMO screens
@@ -27,10 +28,12 @@ make smoke                 # headless live smoke against fujinet-pc
 ```
 
 `build.sh` assembles with zmac (found on `PATH`, or `~/Workspace/zmac-1.3`,
-or the firmware's `pico/astrocade` tree), pads to the 8 KB cartridge window,
-stamps the `FUJI` claim at `0x1CFC`, and runs `tools/checkrom.py` and
-`tools/checksize.py` — the latter prints the per-module byte budget from the
-`MB_*` fences and fails over the 6,912-byte ceiling.
+or the firmware's `pico/astrocade` tree) — one assembly, the pages laid out
+with ORG/PHASE — pads to the 20K image, stamps the `FUJI` claim at
+`0x1CFC`, and runs `tools/checkrom.py --banked` and `tools/checksize.py` —
+the latter prints the byte budget per region (page 0, the resident half,
+each 4K page) from the `MB_*` fences and fails any region over its
+ceiling.
 
 Running needs a fujinet-pc (or Pico) with the `GCAL:` adapter, Google
 authorised in the web UI with **both** `calendar.readonly` and
@@ -67,34 +70,50 @@ selected event. Move between the seven fields (title, date, start, end,
 where, notes, category) with the disc; the trigger opens the selected field
 in the on-screen grid keyboard (netcat's 96-glyph mixed-case set), where the
 keypad types digits straight in, the disc + trigger pick any character, `CE`
-deletes, `=` accepts and `C` cancels. On the form, `=` saves and `C` leaves
-(through a save-or-discard ask if anything was typed). A blank start time
-makes an all-day event; an edit sends only the fields you changed. Nothing
-touches the network until the save, and the form checks a required title and
-an end-without-start first, because the adapter reports every draft
-rejection as one opaque code.
+deletes, `=` accepts and `C` cancels. Dates and times get the digit-mask
+editor instead: the first digit lays an underscore mask, `CE` backs up one
+slot (and with nothing typed EMPTIES the field -- a blank start is the
+wire's spelling of all-day), and a half-typed value is rolled back rather
+than sent as nonsense. On the form, `=` saves and `C` leaves (through a
+save-or-discard ask if anything was typed). An edit sends only the fields
+you changed. Nothing touches the network until the save, and the form
+validates everything it can locally -- a required title, an
+end-without-start, a real date (leap Februaries included), well-formed
+times -- because the adapter reports every draft rejection as one opaque
+code.
 
-## What is not here, and why
+## The banked cartridge
 
-The Astrocade cartridge is a single 8 KB bank, and full parity with the
-other clients does not fit in 6,912 bytes. Dropped, in the order they would
-come back if the firmware gains **bank switching** (a larger, banked cart):
+The client is a 20K **APPBANK** image for the protocol-v2 FujiNet cart
+(fujinet-firmware `pico/astrocade`): the 8K window plus three 4K pages,
+selected by one read at `FNBKSEL+page` with the mailbox fully live. Page 0
+holds the screens (views, week, month, detail, the parser, alarms), the
+resident half 3000H-3AFFH the shared library and the bank trampolines (the
+only code that switches pages), page 2 the form and grid keyboard, page 3
+settings and the calendar picker, page 4 the splash and DEMO screens.
+`tools/checksize.py` budgets each region on every build.
 
-- **Week view** — day, month and agenda cover its uses.
-- **Synthesised alarms** — the machine has no interrupt-driven time base of
-  its own; the clock is re-fetched from the FujiNet as you navigate.
-- **Calendar picker and multi-calendar** — the client always shows all
-  calendars. There is no settings screen; the alarm-lead and calendar
-  appkey the other clients persist are not used here.
-- **The digit-mask date/time editor** — dates and times are typed in the
-  same grid keyboard as the text fields (the keypad still types digits;
-  `-` is on the keypad, `:` is on the grid). The other clients mask them.
-- **Detail paging** — the detail screen shows one screenful; the adapter
-  wraps at 80 columns, so all but the longest events fit.
+With the single-8K ceiling gone, the five features cut from the first
+release are back, full parity with the other clients:
 
-Everything else — the four cut features included — was implemented and works;
-the cuts are a size decision, not a capability one. See the top-level plan
-and the port notes in the repo's memory for the full history.
+- **Week view** (`2`) — seven rows Sun-Sat with the leading event's colour
+  chip, the day of month (inverse for today), an event count and one block
+  per event; `=` re-anchors to the selected day and drills to the day
+  view, `5` composes on it, left/right step a whole week.
+- **Synthesised alarms** — in the day view on today, an event starting
+  within the alarm lead rings once: the chime and a status-row banner with
+  the start time. Any key dismisses it. (The adapter's field mask never
+  carries reminders, so alarms are synthesised client-side, the C and
+  Intellivision rule.)
+- **Calendar picker and settings** (`C`) — alarm lead, the calendar
+  selector (picked by NAME from the adapter's list; index 0 = all), and
+  the timezone readout that catches a rejected POSIX TZ. Persisted in the
+  shared appkey (creator 4743H / app 1 / key 0) and loaded at boot.
+- **The digit-mask date/time editor** — above.
+- **Detail paging** — up/down page the detail eleven wrapped rows at a
+  time; a page turn re-opens the read and skips ahead, riding the
+  adapter's 120-second window cache, so nothing is buffered and the last
+  page is sticky.
 
 ## How it is built
 

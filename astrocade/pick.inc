@@ -17,6 +17,7 @@ PKDRW:  LD      A,0             ; REQTYP: calendar list
         CALL    GCFETCH
         JP      C,PKERR
         CALL    CHROME
+        CALL    CLKDRW
         LD      HL,SPKH
         LD      D,1
         LD      E,3
@@ -268,6 +269,43 @@ STPICK: CALL    PICKER
 STSAVE: CALL    AKSAVE
         LD      A,1
         LD      (DIRTY),A
+        RET
+
+; TZGET: the adapter's timezone string into LINEBUF (the settings screen
+; shows it because a rejected POSIX TZ silently falls back to UTC and this
+; readout is the only symptom). CLKGET's shape, command CLKTZ. Carry on
+; failure.
+TZGET:  LD      A,CLKDEV
+        LD      E,CLKTZ
+        LD      L,0
+        CALL    FNBEGIN
+        LD      B,3
+        CALL    FNCOMMIT
+        RET     C
+        JR      NZ,TZBAD
+        LD      A,(FNREPLY)
+        CP      FCACK
+        JR      NZ,TZBAD
+        XOR     A
+        LD      (CURSLC),A      ; the cart republished slice 0
+        LD      A,(FNRXLL)
+        OR      A
+        JR      Z,TZBAD
+        CP      40
+        JR      C,TZG1
+        LD      A,39
+TZG1:   LD      B,A
+        LD      HL,FNRDATA
+        LD      DE,LINEBUF
+TZG2:   LD      A,(HL)
+        LD      (DE),A
+        INC     HL
+        INC     DE
+        DJNZ    TZG2
+        XOR     A               ; NUL, and the carry clear with it
+        LD      (DE),A
+        RET
+TZBAD:  SCF
         RET
 
 SSTH:   DB      "SETTINGS",0

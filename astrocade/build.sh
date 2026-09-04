@@ -3,11 +3,12 @@
 #
 # Usage: ./build.sh            (DEMO=1 ./build.sh for the static mock screens)
 #
-# Output: build/gcal.bin, always exactly 8192 bytes: the assembled code,
-# zero-padded, mailbox pages clear, "FUJI" claim signature at 0x1CFC so the
-# mailbox stays alive when the image is booted over the network. The layout
-# contract is enforced by tools/checkrom.py; tools/checksize.py then prints
-# the per-module budget table.
+# Output: build/gcal.bin, a 20K banked APPBANK image (firmware protocol
+# v2): the 8K window plus three 4K pages, mailbox pages clear, "FUJI" claim
+# signature at 0x1CFC so the mailbox stays alive when the image is booted
+# over the network. The layout contract is enforced by
+# tools/checkrom.py --banked; tools/checksize.py prints the per-region
+# budget table.
 #
 # Environment:
 #   DEMO=1              assemble the static mock screens instead of the app
@@ -24,9 +25,9 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-WINDOW=8192
+# The banked image: the 8K window plus the form, settings and splash pages.
+IMAGE=$((8192 + 3*4096))
 CLAIM_OFF=$((0x1CFC))
-ROM_TOP=$((0x1B00))
 
 FUJI_PICO=${FUJI_PICO:-$HOME/Workspace/fujinet-firmware/pico/astrocade}
 
@@ -69,19 +70,20 @@ mkdir -p build
 "$ZMAC" -o build/gcal.raw -x build/gcal.lst gcal.asm
 
 size=$(wc -c < build/gcal.raw)
-if [ "$size" -gt "$ROM_TOP" ]; then
-    echo "build.sh: gcal is $size bytes, over the $ROM_TOP ROM top" >&2
+if [ "$size" -gt "$IMAGE" ]; then
+    echo "build.sh: gcal is $size bytes, over the $IMAGE image" >&2
     exit 1
 fi
 
-# Pad to the full window, clear above ROM_TOP, stamp the claim.
+# Pad to the full image (zmac zero-fills the gaps between ORGs, the
+# mailbox pages included), stamp the claim.
 {
     cat build/gcal.raw
-    head -c $((WINDOW - size)) /dev/zero
+    head -c $((IMAGE - size)) /dev/zero
 } > build/gcal.bin
 printf 'FUJI' | dd of=build/gcal.bin bs=1 seek=$CLAIM_OFF \
     conv=notrunc status=none
 rm -f build/gcal.raw
 
-python3 tools/checkrom.py build/gcal.bin
+python3 tools/checkrom.py --banked build/gcal.bin
 python3 tools/checksize.py build/gcal.lst

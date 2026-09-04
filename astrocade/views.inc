@@ -16,21 +16,31 @@ VIEWLP: LD      A,(DIRTY)
         CALL    VDRAW
 VPOLL:  CALL    DELAY10
         CALL    CLKTIK
+        CALL    ALTICK
         CALL    INPOLR
         OR      A
         JR      Z,VPOLL
+        LD      C,A             ; a key during the alarm banner dismisses
+        LD      A,(ALSTATE)     ; it and is swallowed
+        OR      A
+        JR      Z,VNOAL
+        XOR     A
+        LD      (ALSTATE),A
+        LD      HL,SHINT1
+        CALL    MSGROW
+        JR      VPOLL
+VNOAL:  LD      A,C
         CP      EVD0
         JR      C,VKEV
         SUB     EVD0            ; a digit
         JR      Z,VKTOD         ; 0: today
-        CP      4
-        JR      C,VKVIEW        ; 1-3: day, month, agenda
         CP      5
+        JR      C,VKVIEW        ; 1-4: day, week, month, agenda
         JP      Z,VKNEW         ; 5: compose
         CP      6
         JP      Z,VKEDIT        ; 6: edit the selection
         JP      VPOLL
-VKVIEW: DEC     A               ; 0,1,2 index the view table
+VKVIEW: DEC     A               ; 0-3 index the view table
         LD      E,A
         LD      D,0
         LD      HL,KVIEW
@@ -38,7 +48,7 @@ VKVIEW: DEC     A               ; 0,1,2 index the view table
         LD      A,(HL)
         LD      (VIEW),A
         JR      VDIRT
-KVIEW:  DB      0,2,3           ; VIEW 1 (week) was dropped for ROM budget
+KVIEW:  DB      0,1,2,3         ; the week is back (banked cart)
 VKTOD:  CALL    DLDTOD
         CALL    DSTANC
 VDIRT:  LD      A,1
@@ -62,13 +72,26 @@ VKEV:   CP      EVUP
         JP      Z,VOPEN
         CP      EVEQ
         JP      Z,VOPEN
+        CP      EVCLR
+        JP      Z,VSETUP
         JP      VPOLL
 
-; VOPEN: trigger / =. Month drills to the day view on the cursor; day and
-; agenda open the selected event's detail.
+; VSETUP: 'C' opens the settings page; back with a refetch (the calendar
+; selector may have changed).
+VSETUP: CALL    TSETUP
+        JP      VDIRT
+
+; VOPEN: trigger / =. Month drills to the day view on the cursor; the week
+; re-anchors to the selected row's day and drills; day and agenda open the
+; selected event's detail.
 VOPEN:  LD      A,(VIEW)
         CP      2
         JR      Z,VODAY
+        CP      1
+        JR      NZ,VOP1
+        CALL    WSETANC
+        JR      VODAY
+VOP1:
         LD      A,(NROWS)
         OR      A
         JP      Z,VPOLL
@@ -90,20 +113,30 @@ VOPEN:  LD      A,(VIEW)
         LD      A,1
         LD      (DIRTY),A
         JP      VIEWLP
-VOEDIT: LD      A,1             ; edit the open event (phase 5 form)
+VOEDIT: LD      A,1             ; edit the open event
         LD      (FMEDIT),A
-        JP      VFORM
+        CALL    TFORM           ; the form lives in its own page
+        JP      VIEWLP
 VODAY:  XOR     A
         LD      (VIEW),A
         JP      VDIRT
 
-; VKNEW: compose a new event on the anchor date.
-VKNEW:  XOR     A
+; VKNEW: compose a new event on the anchor date -- in the week, on the
+; SELECTED day (the C client's rule).
+VKNEW:  LD      A,(VIEW)
+        CP      1
+        JR      NZ,VKN1
+        CALL    WSETANC
+VKN1:   XOR     A
         LD      (FMEDIT),A
-        JP      VFORM
-; VKEDIT: edit the selected event (day/agenda only).
+        CALL    TFORM
+        JP      VIEWLP
+; VKEDIT: edit the selected event (day/agenda only; the week and month
+; have no per-event rows).
 VKEDIT: LD      A,(VIEW)
         CP      2
+        JP      Z,VPOLL
+        CP      1
         JP      Z,VPOLL
         LD      A,(NROWS)
         OR      A
@@ -123,14 +156,22 @@ VKEDIT: LD      A,(VIEW)
         LD      (DEVNUM+1),A
         LD      A,1
         LD      (FMEDIT),A
-        JP      VFORM
+        CALL    TFORM
+        JP      VIEWLP
 
-; ---- left/right: every remaining view steps a day
-VKPRV:  CALL    DLDANC
+; ---- left/right: a day, except the week steps a whole week (the month's
+; 7-day walks do exactly that)
+VKPRV:  LD      A,(VIEW)
+        CP      1
+        JP      Z,VKUPM
+        CALL    DLDANC
         CALL    DSUBDAY
 VKST:   CALL    DSTANC
         JP      VDIRT
-VKNXT:  CALL    DLDANC
+VKNXT:  LD      A,(VIEW)
+        CP      1
+        JP      Z,VKDNM
+        CALL    DLDANC
         CALL    DADDDAY
         JR      VKST
 
@@ -190,6 +231,8 @@ VSELX:  LD      A,(NROWS)
 VDRAW:  XOR     A
         LD      (DIRTY),A
         LD      A,(VIEW)
+        CP      1
+        JP      Z,WDRAW
         CP      2
         JP      Z,MDRAW
         ; day / agenda: the list renderer
@@ -235,8 +278,7 @@ VDR2:   LD      HL,SHINT1
         LD      (SELROW),A
 VDR3:   JP      VSELX
 
-; VTAG: row 1: the view's name (the calendar picker was dropped, so there
-; is only ever the one calendar to name).
+; VTAG: row 1: the view's name and the calendar selector.
 VTAG:   LD      A,(VIEW)
         ADD     A,A
         ADD     A,A
@@ -248,7 +290,22 @@ VTAG:   LD      A,(VIEW)
         LD      D,1
         LD      E,3
         LD      C,XKONA
-        JP      TXTAT
+        CALL    TXTAT
+        LD      HL,SCAL
+        LD      D,1
+        LD      E,10
+        LD      C,XKONA
+        CALL    TXTAT
+        LD      A,(CALSEL)
+        OR      A
+        LD      HL,SALL
+        JR      Z,VTG1
+        LD      HL,CALSEL
+VTG1:   LD      D,1
+        LD      E,14
+        LD      C,XKONA
+        LD      B,25
+        JP      TXTN
 
 ; VHEADS: row 2 column heads for the list shape.
 VHEADS: LD      HL,STIME
@@ -262,8 +319,7 @@ VHEADS: LD      HL,STIME
         LD      C,XDONK
         JP      TXTAT
 
-SFETCH: DB      "Fetching...",0
-SNOCONN: DB     "No connection",0
+; SFETCH/SNOCONN/SEVENT/SHINT1 are resident (gcal.asm MB_SHARED): month,
+; detail, the form page and the picker page all print them.
 STIME:  DB      "TIME",0
-SEVENT: DB      "EVENT",0
-SHINT1: DB      "1-3 VIEW 0 TODAY 5 NEW 6 EDIT",0
+SCAL:   DB      "CAL:",0

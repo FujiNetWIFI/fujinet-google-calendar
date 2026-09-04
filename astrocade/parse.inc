@@ -14,11 +14,8 @@
 
 CATBUF  EQU     LINEBUF
 
-; EOLP: Z set when A is a line terminator.
-EOLP:   CP      9BH
-        RET     Z
-        CP      0AH
-        RET
+; EOLP (line-terminator predicate) is resident -- gcal.asm MB_SHARED --
+; because the picker page needs it too.
 
 ; PSETB: the line's column boundaries for this view, once NUMW is known:
 ; time = 3 + numW + (dateW+1 or 0), category +12, title +15.
@@ -100,6 +97,7 @@ PLEVT:  XOR     A
         LD      (PSKIP),A
         LD      (PEVN),A
         LD      (PEVN+1),A
+        LD      (PTMP+2),A      ; week: no weekday captured yet
         LD      A,(ANCD)        ; row date defaults to the anchor (day view)
         LD      (PDAY),A
         LD      A,(ANCM)
@@ -185,9 +183,13 @@ PLEM3:  LD      A,1
 ; an edit prefills the right date; day view has no date column and week/
 ; month do not come through here.
 ; The date column carries the row's day. Agenda is "DD Mon" (day first);
-; month is "Fr 28" (day last). Both feed the same day accumulators; month
-; keeps the anchor month, agenda reads the 3-letter name.
+; month is "Fr 28" (day last); the week is the bare weekday name ("Fri"),
+; whose first two letters match an MWDAYS pair into PTMP+2 (dow+1, 0 =
+; nothing matched). Month keeps the anchor month, agenda reads the
+; 3-letter month name.
 PLEDATE: LD     A,(VIEW)
+        CP      1
+        JR      Z,PLEDWK
         CP      2
         JR      Z,PLEDMO
         CP      3
@@ -243,6 +245,43 @@ PLEDMO: LD      A,B
         JR      Z,PLDT
         CP      4
         JR      Z,PLDU
+        JP      PLENXT
+; week "Fri": hold the first letter; the second completes the pair and
+; matches it against MWDAYS (whose pairs equal the wire's first two
+; letters byte for byte).
+PLEDWK: LD      A,B
+        LD      HL,PDATEC
+        SUB     (HL)
+        JR      Z,PLDW0
+        CP      1
+        JP      NZ,PLENXT
+        LD      A,E
+        LD      (PTMP+1),A
+        PUSH    BC
+        PUSH    DE
+        LD      HL,MWDAYS
+        LD      C,0
+PLDW1:  LD      A,(PTMP)
+        CP      (HL)
+        INC     HL
+        JR      NZ,PLDW2
+        LD      A,(PTMP+1)
+        CP      (HL)
+        JR      NZ,PLDW2
+        LD      A,C
+        INC     A
+        LD      (PTMP+2),A
+        JR      PLDW3
+PLDW2:  INC     HL
+        INC     C
+        LD      A,C
+        CP      7
+        JR      C,PLDW1
+PLDW3:  POP     DE
+        POP     BC
+        JP      PLENXT
+PLDW0:  LD      A,E
+        LD      (PTMP),A
         JP      PLENXT
 
 ; MONFN: A = month 1-12 from the three letters in PTMP, matched against
@@ -392,7 +431,12 @@ PLEFIN: CALL    CATMAT          ; A = bin
         LD      C,A
         LD      A,(PMODE)
         OR      A
-        JR      NZ,PLETAL
+        JR      Z,PLEREN
+        LD      A,(VIEW)        ; tally: the week and the month differ
+        CP      1
+        JP      Z,PLWTAL
+        JR      PLETAL
+PLEREN:
         LD      A,(CROW)        ; render: META[row]
         SUB     CTOP
         ADD     A,A

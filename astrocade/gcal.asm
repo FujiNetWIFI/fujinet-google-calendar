@@ -14,9 +14,18 @@
 ; re-open plus a skip count, which the adapter's 120-second window cache
 ; makes nearly free.
 ;
-; ROM budget: 0000H-1AFFH of the 8K window (6,912 bytes); 1B00H+ belongs to
-; the mailbox and build.sh stamps the "FUJI" claim at 1CFCH. checksize.py
-; itemises the MB_* fences on every build.
+; A BANKED cartridge (firmware protocol v2, APPBANK): the image is the 8K
+; window plus 4K pages, and one read at FNBKSEL+page maps a page into
+; 2000H-2FFFH. The high half 3000H-3AFFH never moves and holds the shared
+; library (gfx, font, input, net, url, date, clock, ui, transport) plus the
+; bank trampolines; 3B00H+ belongs to the mailbox and build.sh stamps the
+; "FUJI" claim at 1CFCH. Page 0 is the screens (views, month, detail,
+; parse); page 2 the form + grid keyboard; page 3 settings/picker; page 4
+; the splash (and DEMO screens). Pages are laid out with ORG/PHASE in one
+; assembly, so every symbol resolves in one namespace -- the DISCIPLINE is
+; that only the trampolines below RSTENT ever switch pages, and nothing
+; executes from 2000H-2FFFH while switching away from the page the PC is
+; in. checksize.py itemises the MB_* fences per region on every build.
 ;
 ; Interrupts stay off for the program's whole life (fujilib.inc's contract);
 ; pacing is DELAY10 spins, and the wall clock is the FujiNet's, re-fetched.
@@ -24,6 +33,12 @@
         INCLUDE "HVGLIB.H"
         INCLUDE "fujinet.inc"
         INCLUDE "build/flags.inc"
+
+; ---- the banked layout ------------------------------------------------
+NPAGES  EQU     5               ; pages 0-4; image = 8K + 3 x 4K = 20K
+PGFRM   EQU     2               ; form + grid keyboard
+PGSET   EQU     3               ; settings / calendar picker / appkeys
+PGSPL   EQU     4               ; splash (and the DEMO screens)
 
 ; ---- geometry ---------------------------------------------------------
 LINES   EQU     84              ; visible scanlines: 14 rows of 4x6
@@ -197,7 +212,7 @@ PRGSTR: DI
         DB      0               ; color 0 everywhere: the white page
         EXIT
 
-        CALL    SPLASH
+        CALL    TSPLSH
 
         CALL    FNCHECK
         JP      NZ,NOCARD
@@ -215,7 +230,7 @@ KWAIT:  CALL    KEYRAW
         LD      (V_GY),A
 
         IF      DEMO
-        JP      DEMOGO
+        JP      TDEMOGO
         ELSE
         CALL    WPAL
         LD      A,10            ; defaults until appkeys land (phase 4)
@@ -225,6 +240,7 @@ KWAIT:  CALL    KEYRAW
         LD      (VIEW),A
         LD      (SELROW),A
         LD      (CLKOK),A
+        LD      (ALSTATE),A
         LD      H,A
         LD      L,A
         LD      (FIRST),HL
@@ -232,6 +248,7 @@ KWAIT:  CALL    KEYRAW
         LD      A,0FFH
         LD      (SYNCM),A
         CALL    CLKGO           ; the clock is mandatory; blocks until it
+        CALL    TAKLOAD         ; saved settings override the defaults
         CALL    DLDTOD          ; anchor := today
         CALL    DSTANC
         LD      A,1
@@ -262,10 +279,103 @@ HALTE:  JR      HALTE
 
 ; ---- Data -------------------------------------------------------------
 MB_DATA:
+; PALET/SPALET moved to MB_SHARED: WPAL (resident) and the splash page both
+; read them with other pages selected, so they cannot live in page 0.
+
+SNOCART: DB     "NO FUJINET CART",0
+        IF      DEMO
+        ELSE
+SNOCLK: DB      "No clock",0
+        ENDIF
+
+        IF      DEMO
+        ELSE
+MB_VIEWS:
+        INCLUDE "views.inc"
+MB_MONTH:
+        INCLUDE "month.inc"
+MB_WEEK:
+        INCLUDE "week.inc"
+MB_DETAIL:
+        INCLUDE "detail.inc"
+        ENDIF
+        IF      DEMO
+; parse assembles even in the demo (dead there), and its week hook
+; references these from the excluded month/week includes.
+MWDAYS: DB      "SuMoTuWeThFrSa"
+PLWTAL: RET
+        ENDIF
+MB_PARSE:
+        INCLUDE "parse.inc"
+        IF      DEMO
+        ELSE
+MB_ALARM:
+        INCLUDE "alarm.inc"
+        ENDIF
+MB_SOUND:
+        INCLUDE "sound.inc"
+MB_P0END:
+
+; ---- resident: 3000H-3AFFH, the half that never banks ------------------
+; RSTENT sits at exactly 3000H: every page's stamped header points its
+; start vector here, so a console RESET with any page selected re-selects
+; page 0 and cold-starts the app (the cart edge has no reset line).
+        ORG     3000H
+MB_BANK:
+RSTENT: LD      A,(FNBKSEL+0)
+        JP      PRGSTR
+
+; The trampolines -- the only code that ever switches pages. Each selects
+; the target, calls straight through (one namespace: the labels are the
+; PHASEd runtime addresses), and re-selects the page its callers live in.
+TSPLSH: LD      A,(FNBKSEL+PGSPL)
+        CALL    SPLASH
+        LD      A,(FNBKSEL+0)
+        RET
+        IF      DEMO
+TDEMOGO:
+        LD      A,(FNBKSEL+PGSPL)
+        JP      DEMOGO          ; the demo cycle never returns
+TEDIT4: LD      A,(FNBKSEL+PGFRM)
+        CALL    EDIT
+        LD      A,(FNBKSEL+PGSPL)
+        RET
+        ELSE
+TFORM:  LD      A,(FNBKSEL+PGFRM)
+        CALL    VFORM
+        LD      A,(FNBKSEL+0)
+        RET
+TSETUP: LD      A,(FNBKSEL+PGSET)
+        CALL    SETUP
+        LD      A,(FNBKSEL+0)
+        RET
+TAKLOAD:
+        LD      A,(FNBKSEL+PGSET)
+        CALL    AKLOAD
+        LD      A,(FNBKSEL+0)
+        RET
+        ENDIF
+
+MB_SHARED:
+; EOLP: Z set when A is a line terminator (9BH primary, 0AH accepted).
+; Resident because parse (page 0) and the picker (page 3) both need it.
+EOLP:   CP      9BH
+        RET     Z
+        CP      0AH
+        RET
+
+; Strings shared across pages (month/detail/form/picker all print these).
+SFETCH: DB      "Fetching...",0
+SNOCONN: DB     "No connection",0
+SEVENT: DB      "EVENT",0
+SHINT1: DB      "1-4 VIEW 0 TODAY 5 NEW 6 EDIT C SET",0
+SALL:   DB      "ALL",0
+
 ; COLSET stores descending, ports 7 down to 0: left palette colors 3,2,1,0,
 ; then right palette colors 3,2,1,0. Byte = (hue << 3) | luminance; hue 0
 ; is the grayscale column. Values computed against MAME's palette math for
-; the Google colors -- see astrocade/README.md.
+; the Google colors -- see astrocade/README.md. Resident: WPAL and the
+; boot/splash read them from whichever page is live.
 ;
 ; Working screens (HORCB=1: column 0 is the chip gutter on the left):
 ;   left  3 chip blue (D3), 2 chip green (C3), 1 chip red (51), 0 white
@@ -279,31 +389,8 @@ PALET:  DB      0D3H,0C3H,051H,007H
 SPALET: DB      000H,0C2H,0F4H,007H
         DB      000H,075H,04CH,007H
 
-SNOCART: DB     "NO FUJINET CART",0
-        IF      DEMO
-        ELSE
-SNOCLK: DB      "No clock",0
-        ENDIF
-
-MB_SPLASH:
-        INCLUDE "splash.inc"
 MB_UI:
         INCLUDE "ui.inc"
-        IF      DEMO
-MB_DEMO:
-        INCLUDE "demo.inc"
-        ELSE
-MB_VIEWS:
-        INCLUDE "views.inc"
-MB_MONTH:
-        INCLUDE "month.inc"
-MB_DETAIL:
-        INCLUDE "detail.inc"
-MB_FORM:
-        INCLUDE "form.inc"
-        ENDIF
-MB_PARSE:
-        INCLUDE "parse.inc"
 MB_NET:
         INCLUDE "net.inc"
 MB_URL:
@@ -312,12 +399,8 @@ MB_DATE:
         INCLUDE "date.inc"
 MB_CLOCK:
         INCLUDE "clock.inc"
-MB_EDIT:
-        INCLUDE "edit.inc"
 MB_INPUT:
         INCLUDE "input.inc"
-MB_SOUND:
-        INCLUDE "sound.inc"
 MB_STATE:
         INCLUDE "state.inc"
 MB_GFX:
@@ -326,4 +409,61 @@ MB_FONT:
         INCLUDE "assets/font.inc"
 MB_FUJILIB:
         INCLUDE "fujilib.inc"
+MB_RESEND:
+
+; ---- page 2: the form and the grid keyboard ----------------------------
+        ORG     4000H
+        PHASE   2000H
+MB_PG2:
+        DB      55H             ; stamped header: RESET lands safely
+        DW      MENUST
+        DW      PG2NAM
+        DW      RSTENT
+PG2NAM: DB      "GCAL",0
+        IF      DEMO
+        ELSE
+MB_FORM:
+        INCLUDE "form.inc"
+        ENDIF
+MB_EDIT:
+        INCLUDE "edit.inc"
+MB_PG2END:
+        DEPHASE
+
+; ---- page 3: settings / calendar picker (restored in the banked build) --
+        ORG     5000H
+        PHASE   2000H
+MB_PG3:
+        DB      55H
+        DW      MENUST
+        DW      PG3NAM
+        DW      RSTENT
+PG3NAM: DB      "GCAL",0
+        IF      DEMO
+        ELSE
+MB_PICK:
+        INCLUDE "pick.inc"
+MB_APPKEY:
+        INCLUDE "appkey.inc"
+        ENDIF
+MB_PG3END:
+        DEPHASE
+
+; ---- page 4: the splash (and the DEMO screens) --------------------------
+        ORG     6000H
+        PHASE   2000H
+MB_PG4:
+        DB      55H
+        DW      MENUST
+        DW      PG4NAM
+        DW      RSTENT
+PG4NAM: DB      "GCAL",0
+MB_SPLASH:
+        INCLUDE "splash.inc"
+        IF      DEMO
+MB_DEMO:
+        INCLUDE "demo.inc"
+        ENDIF
+MB_PG4END:
+        DEPHASE
 MB_END:

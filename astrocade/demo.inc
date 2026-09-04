@@ -117,7 +117,7 @@ DFORM:  CALL    CHROME
         LD      (EDTOPR),A
         LD      HL,SHFRM
         LD      (EDHNT),HL
-        JP      EDIT
+        JP      TEDIT4          ; the keyboard lives in the form page
 
 DTITLE: DB      "Dentist visit",0
 SHFRM:  DB      "= DONE  CE DEL  C CANCEL  KEYPAD TYPES",0

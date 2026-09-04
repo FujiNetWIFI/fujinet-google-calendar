@@ -1,11 +1,12 @@
 ; form.inc -- composing and editing an event.
 ;
-; Seven fields on rows 3-9, the adapter's seven draft keys. Every field --
-; text and the date/time fields alike -- is entered through edit.inc's grid
-; keyboard (the keypad types digits straight in). Nothing touches the
-; network until the save, and the form validates a required title and an
-; end-without-start first, because the adapter collapses every draft
-; rejection into one status code.
+; Seven fields on rows 3-9, the adapter's seven draft keys. Text fields go
+; through edit.inc's grid keyboard; DATE, START and END get the digit-mask
+; editor (FEDNUM). Nothing touches the network until the save, and the
+; form validates everything it can locally -- a required title, an
+; end-without-start, a real date (leap Februaries included), well-formed
+; times -- because the adapter collapses every draft rejection into one
+; status code.
 ;
 ; Compose emits every non-empty field (title required); an edit emits only
 ; the fields the user changed -- the client holds no copy of the server's
@@ -125,16 +126,18 @@ FLK:    CALL    INWAIT
         CP      'n'
         JR      Z,FLRET
         JR      FLK
-FLRET:  LD      A,1
-        LD      (DIRTY),A
-        JP      VIEWLP
+FLRET:  LD      A,1             ; back to the caller's page via the
+        LD      (DIRTY),A       ; trampoline; the view loop refetches
+        RET
 
-; FEDIT: edit the selected field. Every field -- text and the date/time
-; fields alike -- goes through edit.inc's grid keyboard; the keypad types
-; digits straight in, and '-' / ':' are picked from the grid (or '-' off
-; the keypad). The dedicated digit-mask editor was dropped for ROM budget;
-; see astrocade/README.md.
+; FEDIT: edit the selected field. Text fields go through edit.inc's grid
+; keyboard; DATE, START and END get the digit-mask editor (restored with
+; the banked cart -- the keypad is the only sane way to type a date).
 FEDIT:  CALL    FPTR            ; sets FMAXC for the selected field
+        LD      A,(FSEL)
+        DEC     A               ; fields 1-3: date / start / end
+        CP      3
+        JP      C,FEDNUM
         JP      FEDTX
 
 ; ---- up/down field selection redraw is whole-form (cheap) -------------
@@ -224,6 +227,153 @@ FEDX:   CALL    FDRAW
 
 
 ; ======================================================================
+; the digit-mask editor: DATE ("YYYY-MM-DD"), START and END ("HH:MM")
+; ======================================================================
+; Transcribed from intv/st_form.bas frm_edit_num. Digits fill the next
+; slot -- the FIRST digit lays the underscore mask, so a half-typed value
+; reads as obviously unfinished; CE backs up one slot, and with nothing
+; typed it EMPTIES the field (a blank START is the wire's only spelling of
+; all-day, so this is how a timed event converts); = or the trigger is
+; done, and a half-typed value is rolled back to the snapshot ("worse than
+; none"); C cancels outright.
+FEDNUM: CALL    FPTRI           ; snapshot for the rollback paths
+        LD      DE,EDBUF
+        CALL    FSTRCP
+        XOR     A
+        LD      (EDVN),A        ; digit slots filled
+        LD      HL,SFNHNT
+        CALL    MSGROW
+FNLOOP: CALL    FEDNR           ; redraw the value (TXTN pads the rest)
+        CALL    INWAIT
+        CP      EVEQ
+        JR      Z,FNDONE
+        CP      EVTRIG
+        JR      Z,FNDONE
+        CP      EVCLR
+        JR      Z,FNCAN
+        CP      EVCE
+        JR      Z,FNBK
+        CP      EVD0
+        JR      C,FNLOOP
+        CP      EVD0+10
+        JR      NC,FNLOOP
+        SUB     EVD0            ; a digit
+        LD      C,A
+        LD      A,(EDVN)
+        OR      A
+        CALL    Z,FNBLNK        ; the first digit lays the mask
+        CALL    FNMAX
+        LD      B,A
+        LD      A,(EDVN)
+        CP      B
+        JR      NC,FNLOOP
+        CALL    FNSLOT
+        LD      A,C
+        ADD     A,'0'
+        LD      (HL),A
+        LD      HL,EDVN
+        INC     (HL)
+        JR      FNLOOP
+FNBK:   LD      A,(EDVN)
+        OR      A
+        JR      NZ,FNBK1
+        CALL    FPTRI           ; nothing typed: EMPTY the field
+        LD      (HL),0
+        JR      FNLOOP
+FNBK1:  DEC     A
+        LD      (EDVN),A
+        CALL    FNSLOT
+        LD      (HL),'_'
+        JR      FNLOOP
+FNCAN:  CALL    FNREST          ; C: put the snapshot back and leave
+        JR      FNX
+FNDONE: LD      A,(EDVN)
+        OR      A
+        JR      Z,FNCHG         ; nothing typed (a CE-empty may stand)
+        CALL    FNMAX
+        LD      B,A
+        LD      A,(EDVN)
+        CP      B
+        JR      NC,FNCHG        ; fully typed: keep it
+        CALL    FNREST          ; half-typed: worse than none
+        JR      FNX
+FNCHG:  CALL    FPTRI           ; changed? compare, mark dirty
+        EX      DE,HL
+        LD      HL,EDBUF
+        CALL    FCMP
+        JR      Z,FNX
+        CALL    FMARKD
+FNX:    CALL    FDRAW
+        JP      FLOOP
+
+; FNREST: snapshot -> field.
+FNREST: CALL    FPTRI
+        EX      DE,HL
+        LD      HL,EDBUF
+        JP      FSTRCP
+
+; FNMAX: A = digit slots for the selected field (8 date, 4 time).
+FNMAX:  LD      A,(FSEL)
+        DEC     A               ; field 1 = DATE
+        JR      Z,FNM8
+        LD      A,4
+        RET
+FNM8:   LD      A,8
+        RET
+
+; FNBLNK: lay the field's mask. Preserves BC.
+FNBLNK: PUSH    BC
+        CALL    FPTRI
+        LD      A,(FSEL)
+        DEC     A
+        LD      DE,FNDMSK
+        JR      Z,FNBC
+        LD      DE,FNTMSK
+FNBC:   EX      DE,HL           ; HL = mask, DE = field
+        CALL    FSTRCP
+        POP     BC
+        RET
+
+; FNSLOT: HL = field + map[EDVN], the digit slot. Preserves BC.
+FNSLOT: PUSH    BC
+        CALL    FPTRI
+        PUSH    HL
+        LD      A,(FSEL)
+        DEC     A
+        LD      HL,FNDMAP
+        JR      Z,FNS1
+        LD      HL,FNTMAP
+FNS1:   LD      A,(EDVN)
+        LD      E,A
+        LD      D,0
+        ADD     HL,DE
+        LD      E,(HL)
+        LD      D,0
+        POP     HL
+        ADD     HL,DE
+        POP     BC
+        RET
+
+; FEDNR: redraw the selected field's value cells. Preserves BC.
+FEDNR:  PUSH    BC
+        CALL    FPTRI
+        LD      A,(FSEL)
+        ADD     A,CTOP
+        LD      D,A
+        LD      E,FVALCOL
+        LD      C,XWONK
+        LD      B,32
+        CALL    TXTN
+        POP     BC
+        RET
+
+FNDMAP: DB      0,1,2,3,5,6,8,9
+FNTMAP: DB      0,1,3,4
+FNDMSK: DB      "____-__-__",0
+FNTMSK: DB      "__:__",0
+SFNHNT: DB      "0-9 TYPE CE DEL =DONE C CANCEL",0
+
+; ======================================================================
 ; save
 ; ======================================================================
 FSAVE:  CALL    FVALID
@@ -272,7 +422,7 @@ FSV4:   LD      (NTMO),A
         JP      FLOOP
 FSVOK:  LD      A,1
         LD      (DIRTY),A
-        JP      VIEWLP
+        RET
 FSVERR: LD      HL,SNOCONN
         CALL    MSGROW
         CALL    INWAIT
@@ -600,12 +750,153 @@ FVALID: XOR     A
         RET
 FV4:    LD      A,(FEND)        ; an end time needs a start time
         OR      A
-        RET     Z
+        JR      Z,FV5
         LD      A,(FSTART)
         OR      A
-        RET     NZ
+        JR      NZ,FV5
         LD      A,2             ; "End needs a start"
         LD      (FERR),A
+        RET
+FV5:    CALL    FVDATE          ; the date must always parse: it is
+        RET     NZ              ;   prefilled, so emptying it is never right
+        LD      HL,FSTART
+        CALL    FVTIME
+        RET     NZ
+        LD      HL,FEND
+        JP      FVTIME
+
+; FVDATE: FDATE must be a real date -- digits in the digit slots, '-' at 4
+; and 7, NUL at 10, month 1-12, day within the real month length (leap
+; Februaries included, via date.inc) -- so 31 February is caught HERE, not
+; as the adapter's one opaque rejection code. Z = ok.
+FVDATE: LD      HL,FDATE
+        LD      B,0
+FVD1:   LD      A,B
+        CP      10
+        JR      NC,FVD3
+        CP      4
+        JR      Z,FVDS
+        CP      7
+        JR      Z,FVDS
+        LD      A,(HL)
+        CALL    FVDIG
+        JR      C,FVDBAD
+        JR      FVD2
+FVDS:   LD      A,(HL)
+        CP      '-'
+        JR      NZ,FVDBAD
+FVD2:   INC     HL
+        INC     B
+        JR      FVD1
+FVD3:   LD      A,(HL)          ; NUL at 10
+        OR      A
+        JR      NZ,FVDBAD
+        LD      HL,FDATE        ; year -> CDY, for the leap rule
+        CALL    FVN2
+        LD      B,A
+        LD      HL,0
+        LD      DE,100
+        LD      A,B
+        OR      A
+        JR      Z,FVDY2
+FVDY1:  ADD     HL,DE
+        DJNZ    FVDY1
+FVDY2:  PUSH    HL
+        LD      HL,FDATE+2
+        CALL    FVN2
+        POP     HL
+        LD      E,A
+        LD      D,0
+        ADD     HL,DE
+        LD      (CDY),HL
+        LD      HL,FDATE+5      ; month 1-12
+        CALL    FVN2
+        OR      A
+        JR      Z,FVDBAD
+        CP      13
+        JR      NC,FVDBAD
+        LD      (CDM),A
+        CALL    DDIM            ; A = days in that month, that year
+        LD      B,A
+        LD      HL,FDATE+8
+        CALL    FVN2
+        OR      A
+        JR      Z,FVDBAD
+        CP      B
+        JR      Z,FVDOK
+        JR      NC,FVDBAD
+FVDOK:  XOR     A
+        RET
+FVDBAD: LD      A,3             ; "Bad date"
+        LD      (FERR),A
+        OR      A
+        RET
+
+; FVTIME: (HL) is "HH:MM" or empty (all-day / no end). Z = ok.
+FVTIME: LD      A,(HL)
+        OR      A
+        RET     Z
+        PUSH    HL
+        LD      A,(HL)
+        CALL    FVDIG
+        JR      C,FVTB
+        INC     HL
+        LD      A,(HL)
+        CALL    FVDIG
+        JR      C,FVTB
+        INC     HL
+        LD      A,(HL)
+        CP      ':'
+        JR      NZ,FVTB
+        INC     HL
+        LD      A,(HL)
+        CALL    FVDIG
+        JR      C,FVTB
+        INC     HL
+        LD      A,(HL)
+        CALL    FVDIG
+        JR      C,FVTB
+        INC     HL
+        LD      A,(HL)
+        OR      A
+        JR      NZ,FVTB
+        POP     HL
+        CALL    FVN2            ; HH <= 23
+        CP      24
+        JR      NC,FVTBAD
+        INC     HL              ; over the ':' to the minutes
+        INC     HL
+        CALL    FVN2            ; MM <= 59
+        CP      60
+        JR      NC,FVTBAD
+        XOR     A
+        RET
+FVTB:   POP     HL
+FVTBAD: LD      A,4             ; "Bad time"
+        LD      (FERR),A
+        OR      A
+        RET
+
+; FVDIG: carry set when A is not an ASCII digit.
+FVDIG:  CP      '0'
+        RET     C
+        CP      '9'+1
+        CCF
+        RET
+
+; FVN2: A = the two-digit number at (HL); HL advances past the first digit.
+FVN2:   LD      A,(HL)
+        SUB     '0'
+        ADD     A,A
+        LD      C,A
+        ADD     A,A
+        ADD     A,A
+        ADD     A,C             ; *10
+        LD      C,A
+        INC     HL
+        LD      A,(HL)
+        SUB     '0'
+        ADD     A,C
         RET
 
 ; ======================================================================
@@ -663,6 +954,8 @@ SFSAVING: DB    "Saving...",0
 SFREJECT: DB    "Rejected",0
 SFDENY: DB      "Not authorised",0
 SFVANISH: DB    "Vanished",0
-FMSGT:  DW      SFMTITLE,SFMEND
+FMSGT:  DW      SFMTITLE,SFMEND,SFMDATE,SFMTIME
 SFMTITLE: DB    "Title required",0
 SFMEND: DB      "End needs a start",0
+SFMDATE: DB     "Bad date",0
+SFMTIME: DB     "Bad time",0
