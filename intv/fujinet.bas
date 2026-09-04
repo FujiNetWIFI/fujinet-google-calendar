@@ -56,9 +56,6 @@
 
     ' $0C is HTTP "GET with header access" and, on file/socket protocols,
     ' plain READ-WRITE -- the same value serves both names.
-    CONST OPEN_MODE_HTTP_GET_H = $0C
-    CONST OPEN_MODE_RW = $0C
-    CONST OPEN_TRANS_NONE = $00
 
     ' The scratch RAM map lives in constants.bas (the SC_* block), which is
     ' INCLUDEd ahead of this file. Keeping it there rather than here lets one
@@ -70,6 +67,17 @@
     DIM mb_dev, mb_cmd, mb_nparam, mb_seq
     DIM #fn_txlen
     DIM #fn_t          ' generic frame-count timeout counter
+' #fn_tmo: how many frames fn_transact will wait for an ACK. It was the
+' literal 900 (~15s at 60Hz) in both places below, which is generous for a
+' listing and not nearly enough for one particular call: opening a GCAL write
+' channel for an EDIT makes the adapter fetch and number the whole window
+' upstream before it answers, because /N has to resolve at open time rather
+' than at commit. The C clients widen their SIO timeout around every save for
+' the same reason (TMO_LONG, src/net.c). Callers raise it for that one
+' transaction and put it back -- see st_form.bas.
+    DIM #fn_tmo
+    CONST FN_TMO_DEF  = 900     ' ~15s
+    CONST FN_TMO_SAVE = 5400    ' ~90s, for a write open
     DIM #fn_src         ' VARPTR source for putstr/getstr
     DIM fn_len, fn_i    ' generic length/index for putstr/getstr
 
@@ -123,12 +131,12 @@ fn_transact: PROCEDURE
     POKE (FN_SEQ), mb_seq
 
     #fn_t = 0
-    WHILE ((PEEK(FN_ACKSEQ) AND 255) <> mb_seq) AND (#fn_t < 900)
+    WHILE ((PEEK(FN_ACKSEQ) AND 255) <> mb_seq) AND (#fn_t < #fn_tmo)
         #fn_t = #fn_t + 1
         WAIT
     WEND
 
-    IF #fn_t >= 900 THEN
+    IF #fn_t >= #fn_tmo THEN
         fn_ok = 0
         #mb_err = 0
         RETURN
@@ -187,20 +195,6 @@ fn_strlen: PROCEDURE
         fn_len = fn_len + 1
     WEND
 END
-
-' ---------------------------------------------------------------------------
-' net_open: open devicespec (ASCII bytes already staged at FN_TX, length in
-' #fn_txlen) for HTTP GET. Leaves fn_ok set.
-' ---------------------------------------------------------------------------
-net_open: PROCEDURE
-    mb_dev = NET_DEVICEID
-    mb_cmd = NETCMD_OPEN
-    mb_nparam = 2
-    pm_i = 0 : pm_size = 1 : #pm_val = OPEN_MODE_HTTP_GET_H : GOSUB fn_param
-    pm_i = 1 : pm_size = 1 : #pm_val = OPEN_TRANS_NONE : GOSUB fn_param
-    GOSUB fn_transact
-END
-
 ' ---------------------------------------------------------------------------
 ' net_status: query byte count available. Result in #net_avail; fn_ok as usual.
 ' ---------------------------------------------------------------------------
@@ -282,45 +276,6 @@ net_close: PROCEDURE
     #fn_txlen = 0
     GOSUB fn_transact
 END
-
-' ---------------------------------------------------------------------------
-' api_call: full round trip -- open the URL staged at FN_TX/#fn_txlen,
-' check status, read up to #net_readlen bytes (caller sets this to the max
-' expected reply size, e.g. 418 for /state, 361 for /tables), close.
-' Leaves fn_ok = 1 and the reply in FN_RX on success.
-' ---------------------------------------------------------------------------
-' ac_i/#ac_prev: loop counter and previous STATUS reading for api_call's
-' stabilization poll (see below).
-DIM ac_i
-DIM #ac_prev
-api_call: PROCEDURE
-    GOSUB net_open
-    IF fn_ok = 0 THEN RETURN
-
-    ' The RP2040/ESP32 can report STATUS as soon as *some* bytes of the
-    ' real internet response have arrived, well before the full response
-    ' does -- open+status+read all happening within the same poll can
-    ' easily race ahead of that. Rather than guess a fixed delay, poll
-    ' STATUS repeatedly and treat two consecutive equal (nonzero)
-    ' readings as "the download has settled" before committing to a
-    ' read length. Bounded to ~20 frames (~0.33s) of polling so a
-    ' genuinely stuck connection still falls through to the normal
-    ' fn_ok=0/timeout handling instead of hanging here.
-    #ac_prev = 0
-    FOR ac_i = 0 TO 19
-        WAIT
-        GOSUB net_status
-        IF fn_ok = 0 THEN RETURN
-        IF #net_avail > 0 AND #net_avail = #ac_prev THEN EXIT FOR
-        #ac_prev = #net_avail
-    NEXT ac_i
-
-    IF #net_avail < #net_readlen THEN #net_readlen = #net_avail
-
-    GOSUB net_read
-    GOSUB net_close   ' close regardless of read result
-END
-
 ' ---------------------------------------------------------------------------
 ' AppKey. The wire struct (fujiDevice.h's `struct appkey`, packed) is 6
 ' bytes: creator_lo, creator_hi, app, key, mode, reserved. mode: 0=read,
@@ -401,29 +356,6 @@ appkey_close: PROCEDURE
     #fn_txlen = 0
     GOSUB fn_transact
 END
-
-' ---------------------------------------------------------------------------
-' fn_putnum: append the decimal (no leading zeros) representation of pn_val
-' (0-999) into FN_TX at the current #fn_txlen. IntyBASIC has no built-in
-' itoa; three digits covers every value the game servers take in a URL
-' (board positions, score indices, ship placements).
-' ---------------------------------------------------------------------------
-DIM pn_val, pn_h, pn_t, pn_o, pn_started
-fn_putnum: PROCEDURE
-    pn_h = pn_val / 100
-    pn_t = (pn_val / 10) % 10
-    pn_o = pn_val % 10
-    pn_started = 0
-    IF pn_h > 0 THEN
-        POKE (FN_TX + #fn_txlen), pn_h + 48 : #fn_txlen = #fn_txlen + 1
-        pn_started = 1
-    END IF
-    IF pn_t > 0 OR pn_started THEN
-        POKE (FN_TX + #fn_txlen), pn_t + 48 : #fn_txlen = #fn_txlen + 1
-    END IF
-    POKE (FN_TX + #fn_txlen), pn_o + 48 : #fn_txlen = #fn_txlen + 1
-END
-
 ' ---------------------------------------------------------------------------
 ' fn_putnum4: append #pn_val4 as exactly four zero-padded decimal digits.
 ' GCAL devicespecs carry an ISO date (YYYY-MM-DD), and fn_putnum above both
@@ -468,3 +400,18 @@ fn_putnum2: PROCEDURE
     POKE (FN_TX + #fn_txlen + 1), pn_val % 10 + 48
     #fn_txlen = #fn_txlen + 2
 END
+
+' ---------------------------------------------------------------------------
+' Removed on the way to fitting compose/edit: api_call, net_open and fn_putnum,
+' with their ac_i/#ac_prev/pn_h/pn_t/pn_o/pn_started variables and the
+' OPEN_MODE_HTTP_GET_H/OPEN_MODE_RW/OPEN_TRANS_NONE constants.
+'
+' They came from netcat/intv, where three games did generic HTTP GETs through
+' them. Nothing in this client ever called them: GCAL opens are aux1-specific
+' (gc_open_dir, ev_open_read, frm_open_write) and the numbers that go into a
+' devicespec are dates and event ids, which fn_putnum2/3/4 format. IntyBASIC
+' compiles unreachable code anyway, so they cost ~270 ROM words and six
+' variable slots to sit there -- and this build had 52 words and no 16-bit
+' slots left. They are still in netcat/intv and fujinet-gmail-client/intv if a
+' later feature wants them back.
+' ---------------------------------------------------------------------------

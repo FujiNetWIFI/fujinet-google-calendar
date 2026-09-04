@@ -14,21 +14,33 @@
 CC      ?= cc
 CFLAGS  ?= -O1 -g -Wall -Wextra -Wno-unused-parameter
 
+# Keep in step with CFLAGS_EXTRA_ATARI in the top-level Makefile: the
+# default binary is the Atari's shape, which since the compose form pays
+# its way there means 48 events, a 40-row detail buffer, and both RAM
+# overlays -- so the form-scribbles-then-detail-rebuilds property and the
+# picker's borrowed list both get host coverage.
+CFLAGSATARI = -DMAX_EVENTS=48 -DDET_ROWS=40 \
+              -DGC_FORM_OVERLAY -DGC_CALS_OVERLAY
+
 # Keep in step with CFLAGS_EXTRA_APPLE2ENH in the top-level Makefile.
 CFLAGS80 = -DTITLE_LEN=50 -DDET_COLS=78 -DDET_ROWS=32 -DDET_LINE_CAP=512 \
-           -DDET_REFLOW -DGC_KEEP_CAT
+           -DDET_REFLOW -DGC_KEEP_CAT -DFRM_LOC_MAX=50 -DFRM_DESC_MAX=160
 
 # Keep in step with CFLAGS_EXTRA_COCO. This is the only shape that exercises
 # MAX_EVENTS at anything but 64, which is what the truncation and agenda
 # overflow assertions are actually about -- and the only one where AGD_MAX is
-# derived rather than the literal 128 both the others happen to get.
-CFLAGS32 = -DMAX_EVENTS=32 -DTITLE_LEN=40 -DDET_COLS=32 -DDET_ROWS=24
+# derived rather than the literal 128 both the others happen to get. It is
+# also one of the two that park the compose form on top of the detail buffer,
+# which is how the overlay's aliasing gets host coverage at all.
+CFLAGS32 = -DMAX_EVENTS=24 -DTITLE_LEN=36 -DDET_COLS=32 -DDET_ROWS=22 \
+           -DGC_FORM_OVERLAY -DGC_CALS_OVERLAY -DLINE_CAP=96
 
 # Keep in step with CFLAGS_EXTRA_ADAM. The Adam is the only backend that pairs
-# a 32-column detail with the default 64 events and a 48-row buffer: the CoCo
-# is 32 columns but pays for it with half the events and half the rows, so this
-# is the one shape where the widest index and the narrowest wrap meet.
-CFLAGSADAM = -DTITLE_LEN=40 -DDET_COLS=32 -DDET_ROWS=48
+# a 32-column detail with the default 64 events: the CoCo is 32 columns but
+# pays for it with far fewer events and rows, so this is the one shape where
+# the widest index and the narrowest wrap meet.
+CFLAGSADAM = -DTITLE_LEN=40 -DDET_COLS=32 -DDET_ROWS=40 \
+             -DGC_FORM_OVERLAY -DGC_CALS_OVERLAY -DLINE_CAP=100
 
 # Keep in step with CFLAGS_EXTRA_MSDOS. The one shape that builds the
 # GC_RT_COLS hook: DET_COLS goes on sizing the 79-byte stride while
@@ -36,7 +48,8 @@ CFLAGSADAM = -DTITLE_LEN=40 -DDET_COLS=32 -DDET_ROWS=48
 # the only binary anywhere with a wrap narrower than its storage -- and
 # therefore the only coverage the hook gets at all.
 CFLAGSDOS = -DGC_RT_COLS -DTITLE_LEN=50 -DDET_COLS=78 -DDET_ROWS=48 \
-            -DDET_LINE_CAP=512 -DDET_REFLOW -DGC_KEEP_CAT
+            -DDET_LINE_CAP=512 -DDET_REFLOW -DGC_KEEP_CAT \
+            -DFRM_LOC_MAX=50 -DFRM_DESC_MAX=160
 
 SRC = hosttest.c \
       ../src/wrap.c \
@@ -48,6 +61,7 @@ SRC = hosttest.c \
       ../src/lines.c \
       ../src/agenda.c \
       ../src/alarm.c \
+      ../src/form.c \
       ../src/model.c
 
 all: hosttest hosttest80 hosttest32 hosttestadam hosttestdos
@@ -58,7 +72,7 @@ all: hosttest hosttest80 hosttest32 hosttestadam hosttestdos
 	./hosttestdos
 
 hosttest: $(SRC) ../src/gcal.h
-	$(CC) $(CFLAGS) -o $@ $(SRC)
+	$(CC) $(CFLAGS) $(CFLAGSATARI) -o $@ $(SRC)
 
 hosttest80: $(SRC) ../src/gcal.h
 	$(CC) $(CFLAGS) $(CFLAGS80) -o $@ $(SRC)

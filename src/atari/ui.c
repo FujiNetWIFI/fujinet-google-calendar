@@ -114,6 +114,9 @@ static const char *status_text(void)
         case GC_DENIED:     return "Authorize in the web UI";
         case GC_NOAUTH:     return "Not authorized";
         case GC_NOSERVICE:  return "Service unavailable";
+        case GC_BADDRAFT:   return "Rejected - check fields";
+        case GC_FULL:       return "Draft too large";
+        case GC_RDONLY:     return "Calendar is read-only";
         default:            return "Calendar error";
         }
     }
@@ -214,6 +217,9 @@ void ui_busy(unsigned char reason)
         break;
     case BUSY_CALS:
         scr_center(13, "Reading calendars...", 0);
+        break;
+    case BUSY_SAVE:
+        scr_center(13, "Saving event...", 0);
         break;
     default:
         scr_center(13, "Fetching calendar...", 0);
@@ -340,8 +346,9 @@ void ui_setup(void)
     scr_text(16, 4, "RETURN    open the selection", 0);
     scr_text(17, 4, "ESC       settings / back", 0);
     scr_text(18, 4, "R  Q      refresh / quit", 0);
+    scr_text(19, 4, "N  E      new / edit event", 0);
 
-    scr_text(20, 2, "FujiNet Google Calendar", 0);
+    scr_text(21, 2, "FujiNet Google Calendar", 0);
 
     ui_footer("1:CALENDAR  <>:LEAD  ESC:SAVE", 0);
 }
@@ -356,4 +363,91 @@ void ui_setup_lead(void)
     strcpy(sbuf, n);
     strcat(sbuf, al_lead == 1 ? " minute before" : " minutes before");
     scr_field(10, 4, sbuf, 30, 0);
+}
+
+/* ------------------------------------------------------------------ */
+/* Compose / edit form                                                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The settings screen's banded arrangement. The active field is drawn as a
+ * full inverse bar -- the picker's selection language -- with the cursor
+ * cell knocked back to normal video, a hole in the bar. compose.c owns the
+ * cursor and the horizontal scroll; this end only paints what it is given.
+ * The fields start at column 8, well clear of the players' chip gutter.
+ */
+
+static const unsigned char frm_rows[FRM_NFIELDS] = { 4, 6, 7, 8, 10, 12, 14 };
+
+#define FRM_VAL_COL     8
+#define FRM_HINT_ROW    16
+#define FRM_MSG_ROW     19
+
+/* Text columns per field window; the short trio get one extra cell so the
+   cursor can sit past a full value. */
+static const unsigned char frm_w[FRM_NFIELDS] = {
+    30, FRM_DATE_MAX + 1, FRM_TIME_MAX + 1, FRM_TIME_MAX + 1, 30, 30, 16
+};
+
+unsigned char ui_form_width(unsigned char f)
+{
+    return frm_w[f];
+}
+
+void ui_form(unsigned char editing)
+{
+    static const char *const label[FRM_NFIELDS] = {
+        "Title", "Date", "Start", "End", "Where", "Notes", "Cat"
+    };
+    unsigned char f;
+
+    dli_bands();
+    scr_clear();
+    pmg_chips_clear();
+
+    pmg_show(LOGO_SMALL, LOGO_ROW, LOGO_COL);
+    scr_text(LOGO_ROW + 1, LOGO_COL + 1, "31", 0);
+    scr_text(0, HDR_TEXT_COL, editing ? "Edit event" : "New event", 0);
+
+    for (f = 0; f < FRM_NFIELDS; f++)
+        scr_text(frm_rows[f], 2, label[f], 0);
+
+    scr_text(FRM_HINT_ROW, 2, "Blank start = all day", 0);
+    if (editing)
+        scr_text(FRM_HINT_ROW + 1, 2, "Blank field = unchanged", 0);
+
+    ui_footer("RET:NEXT  ^v:FIELD  ESC:DONE", 0);
+}
+
+void ui_form_row(unsigned char f, const char *win, unsigned char curx,
+                 unsigned char active)
+{
+    unsigned char w = ui_form_width(f);
+    char          b[2];
+
+    scr_field(frm_rows[f], FRM_VAL_COL, win, w, active);
+
+    if (active) {
+        b[0] = curx < strlen(win) ? win[curx] : ' ';
+        b[1] = '\0';
+        scr_field(frm_rows[f], (unsigned char) (FRM_VAL_COL + curx), b, 1, 0);
+    }
+}
+
+void ui_form_msg(unsigned char msg)
+{
+    const char *s;
+
+    scr_row_clear(FRM_MSG_ROW);
+
+    switch (msg) {
+    case FM_ASK:       s = "Save? (Y/N)";         break;
+    case FM_NEEDTITLE: s = "Title required";      break;
+    case FM_BADDATE:   s = "Date: YYYY-MM-DD";    break;
+    case FM_BADTIME:   s = "Time: HH:MM";         break;
+    case FM_ENDALONE:  s = "End needs a start";   break;
+    default:           return;                  /* FM_NONE: cleared above */
+    }
+
+    scr_center(FRM_MSG_ROW, s, 1);
 }

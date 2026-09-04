@@ -1,0 +1,44 @@
+# keypad.txt -- a keypad press must not move the disc.
+#
+# The hand controller reports ONE byte. The keypad grounds a row line (bits 5-7)
+# and a column line (bits 0-3); the disc reports on bits 0-4. So keypad 4 is
+# $82, and bit 1 of $82 is what the disc uses for RIGHT. Reading the
+# disc as a bare bit test therefore stepped the view to the next period on
+# every press of 4, 5 or 6 -- and because that starts a blocking fetch, and
+# IntyBASIC's CONT.KEY only latches after three identical frames, the key was
+# released before it ever decoded. The console did nothing but advance the date.
+#
+# `raw` injects the controller byte itself rather than a decoded key, so this
+# goes through in_poll's own decoding. `key` would not have caught this.
+#
+# The assertions are expect-same/expect-diff rather than the dates themselves:
+# row 0 here is the DAY view's heading, which comes from the FujiNet clock, and
+# an expect that spells out a date passes only on the day it was written.
+bp label_IN_POLL
+hit
+snap
+# $82 is keypad 4. The date must not move.
+raw 82
+wait 10
+snap
+expect-same 0
+# $42 is keypad 5, $22 is keypad 6 -- same column bit, same trap.
+raw 42
+wait 10
+raw 22
+wait 10
+snap
+expect-same 0
+# $88 is CLEAR and $48 is 0; both carry bit 3, which is LEFT.
+raw 88
+wait 10
+raw 48
+wait 10
+snap
+expect-same 0
+# A real disc RIGHT -- no row bits -- still steps the period, or the gate
+# has simply disabled the disc rather than disambiguating it.
+raw 02
+wait 40
+snap
+expect-diff 0

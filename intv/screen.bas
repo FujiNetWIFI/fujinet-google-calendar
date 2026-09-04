@@ -23,7 +23,30 @@
 
     DIM s_row, s_col, s_i, s_c, s_len, s_max, s_col_color
     DIM #s_src, #s_val
-    DIM #s_bg          ' FGBG background bits for scr_fgbg_row (fgbg.bas)
+' No #s_bg here. It carried FGBG background bits for a scr_fgbg_row that
+' came from fgbg.bas, which is not in this tree -- and the 16-bit pool is
+' the binding constraint now that t9.bas claims eleven of its own.
+
+' ---------------------------------------------------------------------------
+' The text-entry value window, ported from kbd.bas (netcat/intv, itself from
+' fujinet-config/intv). These four names are the whole of what t9.bas needs
+' from that module; grid_entry and its 6x16 charset renderer are deliberately
+' NOT here -- T9 replaces them, and IntyBASIC compiles included code whether
+' it is reachable or not.
+'
+' The contract both editors share: the caller sets #ge_dst (a cart-RAM
+' buffer) and #g_max (its size INCLUDING the NUL), primes the buffer -- a NUL
+' at offset 0 for a fresh field, or existing NUL-terminated text to edit in
+' place -- and reads g_len back afterwards.
+'
+' #g_max must stay 16-bit: at 8 bits, 256 wraps to 0 and g_ent_append's
+' overflow guard stops guarding.
+'
+' g_i/g_c rather than screen.bas's own s_i/s_c because these run underneath
+' t9_entry, which callers reach from st_form.bas while it is mid-way through
+' its own scr_puts loop -- sharing the scratch would corrupt the field list.
+    DIM g_len, g_ch, g_i, g_c, g_cc
+    DIM #ge_dst, #g_max
 
 ' ---------------------------------------------------------------------------
 ' scr_clear: blank the whole 20x12 screen.
@@ -63,14 +86,6 @@ scr_puts: PROCEDURE
         #BACKTAB(s_row * SCREEN_COLS + s_col + s_i) = (s_c - 32) * 8 + s_col_color
     NEXT s_i
 END
-
-' ---------------------------------------------------------------------------
-' scr_dec: print unsigned #s_val at (s_col,s_row) as decimal, in s_col_color.
-' ---------------------------------------------------------------------------
-scr_dec: PROCEDURE
-    PRINT AT screenpos(s_col, s_row) COLOR s_col_color, <>#s_val
-END
-
 ' ---------------------------------------------------------------------------
 ' scr_hilite_digits: recolor every ASCII digit already drawn on row s_row to
 ' s_col_color, leaving every other cell alone. Used on the key-hint footers
@@ -93,17 +108,43 @@ scr_hilite_digits: PROCEDURE
         END IF
     NEXT s_i
 END
+' ---------------------------------------------------------------------------
+' g_ent_draw: tail-anchored VAL_CELLS-cell window (rows 0-2) onto #ge_dst,
+' with a trailing cursor block. A value longer than the window scrolls: what
+' is shown is always the tail, where the typing is happening.
+' ---------------------------------------------------------------------------
+g_ent_draw: PROCEDURE
+    g_i = 0
+    IF g_len > VAL_CELLS - 1 THEN g_i = g_len - (VAL_CELLS - 1)
+    FOR g_c = 0 TO VAL_CELLS - 1
+        g_cc = 32
+        IF g_i + g_c < g_len THEN g_cc = PEEK(#ge_dst + g_i + g_c) AND 255
+        IF g_cc < 32 OR g_cc > 126 THEN g_cc = 32
+        #BACKTAB(VAL_ROW0 * SCREEN_COLS + g_c) = (g_cc - 32) * 8 + COL_VALUE
+    NEXT g_c
+    IF g_len - g_i < VAL_CELLS THEN
+        #BACKTAB(VAL_ROW0 * SCREEN_COLS + (g_len - g_i)) = (95 - 32) * 8 + COL_CURSOR
+    END IF
+END
 
 ' ---------------------------------------------------------------------------
-' scr_recolor: change only the COLOR of s_max already-drawn characters on
-' row s_row starting at column s_col, to s_col_color -- the card (glyph)
-' underneath is left untouched. Used to re-highlight a cursor row without
-' redrawing its text, which for a directory listing would mean re-fetching
-' the filename from the mailbox (never cached, per the RAM budget rule).
+' g_ent_append: append g_ch, honouring the #g_max ceiling. Silent on a full
+' buffer -- t9.bas checks the ceiling itself first so it can flash instead.
 ' ---------------------------------------------------------------------------
-scr_recolor: PROCEDURE
-    FOR s_i = 0 TO s_max - 1
-        #s_val = (#BACKTAB(s_row * SCREEN_COLS + s_col + s_i) AND $FFF8) + s_col_color
-        #BACKTAB(s_row * SCREEN_COLS + s_col + s_i) = #s_val
-    NEXT s_i
+g_ent_append: PROCEDURE
+    IF g_len >= #g_max - 1 THEN RETURN
+    POKE (#ge_dst + g_len), g_ch
+    g_len = g_len + 1
+    POKE (#ge_dst + g_len), 0
+    GOSUB g_ent_draw
+END
+
+' ---------------------------------------------------------------------------
+' g_ent_backspace
+' ---------------------------------------------------------------------------
+g_ent_backspace: PROCEDURE
+    IF g_len = 0 THEN RETURN
+    g_len = g_len - 1
+    POKE (#ge_dst + g_len), 0
+    GOSUB g_ent_draw
 END

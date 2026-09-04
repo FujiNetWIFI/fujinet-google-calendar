@@ -20,7 +20,9 @@ unsigned char gc_agd_count;
 unsigned char gc_daycnt[32];
 unsigned char gc_daycol[32];
 
+#ifndef GC_CALS_OVERLAY
 struct cal    gc_cals[CAL_MAX];
+#endif
 unsigned char gc_cal_count;
 
 unsigned int  cur_y;
@@ -32,6 +34,13 @@ char          gc_cal[CAL_SEL_LEN];
 unsigned char gc_ecode;
 unsigned char gc_dev_ecode;
 const char   *gc_stage;
+
+/* The compose form. Under GC_FORM_OVERLAY the buffer itself is gc_det's RAM
+   (gcal.h aliases it), so only the dirty flags remain real. */
+#ifndef GC_FORM_OVERLAY
+struct frmbuf frm;
+#endif
+unsigned char frm_dirty[FRM_NFIELDS];
 
 /* The wall clock. The values live here, the fetch and tick live in clock.c,
    so a host test can stage a time and exercise the alarm scan. */

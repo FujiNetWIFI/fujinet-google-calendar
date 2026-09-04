@@ -33,7 +33,9 @@
     CONST EV_STRIDE = 21      ' wrap.bas emits 20 chars + NUL
 
     DIM ev_shown, ev_i, ev_c, ev_run
-    DIM #ev_p, #ev_num, #ev_ci
+' #ev_num is DIM'd in constants.bas -- st_form.bas builds its edit URL from
+' it, and is included ahead of this file.
+    DIM #ev_ci
 
 ' ---------------------------------------------------------------------------
 ' ev_open_read: aux1 = 4 (READ), aux2 ignored by the adapter for this mode.
@@ -120,18 +122,18 @@ ev_draw: PROCEDURE
 
     ' The chip and time of the event this detail belongs to, so the screen is
     ' identifiable before the text arrives.
-    #ev_p = SC_EVT + ev_sel * EVT_STRIDE
+    #evrec = SC_EVT + ev_sel * EVT_STRIDE
     s_row = ROW_TITLE : s_col = CHIP_COL
-    vw_chipc = PEEK(#ev_p + EVT_COLOR) AND 255
-    vw_chipa = (PEEK(#ev_p + EVT_FLAGS) AND 255) AND EVF_ALLDAY
+    vw_chipc = PEEK(#evrec + EVT_COLOR) AND 255
+    vw_chipa = (PEEK(#evrec + EVT_FLAGS) AND 255) AND EVF_ALLDAY
     GOSUB vw_chip
     s_col = TIME_COL : s_col_color = COL_HILIGHT
-    vw_h = PEEK(#ev_p + EVT_SH) AND 255
-    vw_m = PEEK(#ev_p + EVT_SM) AND 255
+    vw_h = PEEK(#evrec + EVT_SH) AND 255
+    vw_m = PEEK(#evrec + EVT_SM) AND 255
     vw_alld = vw_chipa
     GOSUB vw_time
 
-    IF (PEEK(#ev_p + EVT_FLAGS) AND 255) AND EVF_RECURRING THEN
+    IF (PEEK(#evrec + EVT_FLAGS) AND 255) AND EVF_RECURRING THEN
         PRINT AT screenpos(7, ROW_TITLE) COLOR COL_DIM, "REPEATS"
     END IF
 
@@ -151,7 +153,7 @@ ev_draw: PROCEDURE
         NEXT ev_i
     END IF
 
-    PRINT AT screenpos(0, ROW_HINT) COLOR COL_DIM, "ANY BUTTON = BACK   "
+    PRINT AT screenpos(0, ROW_HINT) COLOR COL_DIM, "6 EDIT  BUTTON BACK "
 END
 
 ' ---------------------------------------------------------------------------
@@ -159,8 +161,8 @@ END
 ' ---------------------------------------------------------------------------
 do_event: PROCEDURE
     IF ev_shown = 0 THEN
-        #ev_p = SC_EVT + ev_sel * EVT_STRIDE
-        #ev_num = (PEEK(#ev_p + EVT_NUMLO) AND 255) + (PEEK(#ev_p + EVT_NUMHI) AND 255) * 256
+        #evrec = SC_EVT + ev_sel * EVT_STRIDE
+        #ev_num = (PEEK(#evrec + EVT_NUMLO) AND 255) + (PEEK(#evrec + EVT_NUMHI) AND 255) * 256
         GOSUB scr_clear
         PRINT AT screenpos(0, ROW_SUB) COLOR COL_HILIGHT, "LOADING EVENT..."
         GOSUB ev_fetch
@@ -170,6 +172,13 @@ do_event: PROCEDURE
     END IF
 
     GOSUB in_poll
+    IF in_key = KEYPAD_6 THEN
+        ' Edit this event. ev_sel still names it, and frm_edit_event re-reads
+        ' the index record for the adapter's event number.
+        ev_shown = 0
+        GOSUB frm_edit_event
+        RETURN
+    END IF
     IF in_btn <> 0 OR in_key = KEYPAD_CLEAR THEN
         ev_shown = 0
         vw_shown = 0

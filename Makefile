@@ -1,12 +1,24 @@
 PRODUCT = gcal
 PLATFORMS += adam
-PLATFORMS += apple2
 PLATFORMS += apple2enh
 PLATFORMS += atari
-PLATFORMS += c64
 PLATFORMS += coco
 PLATFORMS += msdos
-PLATFORMS += msxrom
+
+# This list is the backends that exist in src/, not the platforms mekkogx can
+# target. SRC_DIRS globs src/%PLATFORM% with $(wildcard), so a platform with no
+# directory does not fail the glob -- it compiles the portable core alone and
+# dies at the link with every plat_*/ui_* symbol unresolved. Three entries
+# inherited from the template did exactly that and have been dropped:
+#
+#   apple2   the unenhanced machine. src/apple2enh/ is not a backend it could
+#            share: screen.c drives 80STORE/HISCR and the alternate character
+#            set, and the chip column is MouseText. See the README.
+#   c64      PLATFORM_COMBOS expands it to src/commodore/, which does not exist
+#   msxrom   likewise src/msx/
+#
+# Add the entry back in the same commit that adds the directory, so that
+# `make` and `make release`, which build every name here, stay green.
 
 # adam_cpm is deliberately absent. PLATFORM_COMBOS below expands it to src/adam/
 # as well as src/adam_cpm/, so listing it would compile this backend's EOS and
@@ -17,7 +29,7 @@ PLATFORMS += msxrom
 # or 'make <platform>/<target>' for a platform-specific target.
 # Example shortcuts:
 #   make coco        → build for coco
-#   make apple2/disk → build the 'disk' target for apple2
+#   make apple2enh/disk → build the 'disk' target for apple2enh
 
 # SRC_DIRS may use the literal %PLATFORM% token.
 # It expands to the chosen PLATFORM plus any of its combos.
@@ -38,20 +50,24 @@ FUJINET_LIB =
 # program has ever had.
 #
 # LIST_ROWS 14 is rows 4-17; 18-19 are the panel that spells the selection out
-# and 20 is the status row. DET_WIN 16 x DET_ROWS 48 is three pages. MAX_EVENTS
-# and GC_RXBUF are both left at the portable defaults, which no other 32-column
-# build can afford: this target links at $0000 in all-RAM mode and the ceiling
-# is the boot block at $C800, so 51K of address space against the CoCo's 27K.
-# The link currently ends its BSS at $B8D3, which is 3.8K of headroom -- check
-# __BSS_END_tail in r2r/adam/gcal.map against $C800 if you raise either.
+# and 20 is the status row. MAX_EVENTS is left at the portable default of 64,
+# which no other 32-column build can afford: this target links at $0000 in
+# all-RAM mode and the ceiling is the boot block at $C800, so 51K of address
+# space against the CoCo's 27K. The compose form's ~4.5K of code spent the
+# old 3.8K of headroom and then some, so the form and picker overlays ride
+# the detail buffer here too (see gcal.h), DET_ROWS comes down to 40 -- at
+# 32 columns still two and a half detail pages -- and GC_RXBUF and LINE_CAP
+# take the CoCo's cheap trades. Check __BSS_END_tail in r2r/adam/gcal.map
+# against $C800 if you raise anything here.
 #
 # TITLE_LEN is 40 rather than the 23 the list column shows, for the same reason
 # as on the CoCo: the panel is two rows of 32, and "09:00-10:00  " leaves 51 of
-# those for the title. Check r2r/adam/gcal.map against the $C800 ceiling if you
-# move it.
+# those for the title.
 CFLAGS_EXTRA_ADAM  = -DBUILD_ADAM -Os
 CFLAGS_EXTRA_ADAM += -DLIST_ROWS=14 -DPICK_ROWS=12 -DDET_WIN=16
-CFLAGS_EXTRA_ADAM += -DDET_COLS=32 -DDET_ROWS=48 -DTITLE_LEN=40
+CFLAGS_EXTRA_ADAM += -DDET_COLS=32 -DDET_ROWS=40 -DTITLE_LEN=40
+CFLAGS_EXTRA_ADAM += -DGC_FORM_OVERLAY -DGC_CALS_OVERLAY
+CFLAGS_EXTRA_ADAM += -DGC_RXBUF=256 -DLINE_CAP=100
 
 # fujinet-lib has no fn_clock for this bus at all -- not clock_get_time, which
 # the CoCo does have, and not clock_get_tz, which it does not. src/adam/
@@ -66,14 +82,52 @@ CFLAGS_EXTRA_ADAM += $(ADAM_SHOT_FLAGS)
 # the $C800 boot block. z88dk writes it next to the executable.
 LDFLAGS_EXTRA_ADAM = -m
 
-# The Atari build carves 2K off the top of memory so we can place a 1K-aligned
-# player/missile graphics buffer above the C stack. See src/atari/pmg.c.
+# The Atari build reserves the top of memory for a 1K-aligned player/missile
+# graphics buffer (see src/atari/pmg.c). 1056 rather than a round 1024: the
+# region runs up to MEMTOP ($BC20), so $420 of reserve puts its floor at
+# exactly $B800 -- the 1K boundary the buffer needs, with the buffer ending
+# $20 under MEMTOP. It used to be a lazy 2048, which guaranteed an aligned
+# 1K block anywhere but wasted 992 bytes; the compose form is what made
+# those bytes worth taking back. pmg.c reads APPMHI rather than assuming a
+# size, so it lands on $B800 either way.
 #
-# It has to go through -Wl: cl65 forwards a bare -D to the *compiler*, which
-# never runs on a link-only invocation, so the flag would be silently dropped
-# and no memory would actually be reserved.
-LDFLAGS_EXTRA_ATARI  = -Wl -D,__RESERVED_MEMORY__=2048
+# __STACKSIZE__ trims cc65's default 2K C stack to 1K. The call graph here
+# is shallow -- blocking screens on the call stack, small locals, statics
+# for everything big -- and the deepest path (view loop -> compose ->
+# save -> fujinet-lib) does not approach 1K of parameter stack.
+#
+# Both have to go through -Wl: cl65 forwards a bare -D to the *compiler*,
+# which never runs on a link-only invocation, so the flag would be silently
+# dropped and no memory would actually be reserved.
+LDFLAGS_EXTRA_ATARI  = -Wl -D,__RESERVED_MEMORY__=1056
+LDFLAGS_EXTRA_ATARI += -Wl -D,__STACKSIZE__=1024
 LDFLAGS_EXTRA_ATARI += --mapfile r2r/atari/gcal.map
+
+# This is the tightest build of the five -- CODE, RODATA, DATA and BSS run
+# contiguously from $2000 and the whole lot has to stay under the ceiling
+# the linker derives ($B400 with the reserve and stack above) -- and the
+# compose form costs ~5K of 6502 code, so it pays its way from every purse
+# at once:
+#
+#   GC_FORM_OVERLAY   the form buffer on top of gc_det -- never alive
+#                     together; see gcal.h
+#   GC_CALS_OVERLAY   the picker's list behind it in the same RAM -- only
+#                     alive inside do_pick()
+#   MAX_EVENTS=48     ~910 bytes; the agenda then asks ?count=48
+#   DET_ROWS=40       ~330 bytes; very long descriptions truncate sooner
+#   GC_RXBUF=256      the CoCo's receive-buffer trade: costs round trips
+#
+# Keep the shape knobs in step with the default hosttest shape in
+# tests/Makefile, and check the BSS line in r2r/atari/gcal.map after
+# moving any of them.
+CFLAGS_EXTRA_ATARI  = -DGC_FORM_OVERLAY -DGC_CALS_OVERLAY
+CFLAGS_EXTRA_ATARI += -DMAX_EVENTS=48 -DDET_ROWS=40 -DGC_RXBUF=256
+CFLAGS_EXTRA_ATARI += -DLINE_CAP=100
+
+# tools/atari-shot.sh appends -DGC_FAKE_DATA / -DGC_FAKE_KEYS through here --
+# this variable now carries the knobs above and a command-line assignment
+# would replace the lot.
+CFLAGS_EXTRA_ATARI += $(ATARI_SHOT_FLAGS)
 
 # The Apple II runs at 80 columns, so it overrides the core's fixed widths:
 # more title in the list column, a wider and correspondingly shorter detail
@@ -92,6 +146,10 @@ CFLAGS_EXTRA_APPLE2ENH += -DPICK_ROWS=14
 # The category column off the wire, which needs somewhere to be shown and
 # 960 bytes to be kept. The Atari has neither.
 CFLAGS_EXTRA_APPLE2ENH += -DGC_KEEP_CAT
+
+# The compose form's field capacities, widened because the 62-column field
+# windows can show what they store and the map says the RAM is there.
+CFLAGS_EXTRA_APPLE2ENH += -DFRM_LOC_MAX=50 -DFRM_DESC_MAX=160
 
 # The enhanced //e is a 65C02 and cc65 generates smaller code for one, but
 # cc65.mk appends its own --cpu 6502 *after* CFLAGS_EXTRA and the last --cpu
@@ -113,20 +171,30 @@ LDFLAGS_EXTRA_APPLE2ENH += --mapfile r2r/apple2enh/gcal.map
 #
 # LIST_ROWS 11 is rows 2-12; rows 13-14 are the panel that spells the selection
 # out, which earns its keep harder here than on the Atari because the list's
-# title column is 23 columns rather than 30. DET_WIN 12 x DET_ROWS 24 is exactly
-# two pages. MAX_EVENTS 32 is three DAY screens and is what ?count= then asks
-# the adapter for.
+# title column is 23 columns rather than 30.
 #
-# TITLE_LEN is 40 rather than the 32 the list column could use: the panel is two
-# rows of 32, and "09:00-10:00  " leaves 51 of those for the title, so 39
-# characters is what the screen can actually show. Anything shorter leaves the
-# panel half empty. It costs MAX_EVENTS times the difference, which the link has
-# the room for -- check r2r/coco/gcal.map against the $7C00 ceiling if you move
-# either number.
+# The RAM knobs below all came down a notch when the compose form arrived --
+# it costs ~4K of 6809 code and this is a 28K machine that was down to its
+# last kilobyte and a half. Check r2r/coco/gcal.map against the $7F00
+# ceiling if you move any of them. MAX_EVENTS 24 is still two DAY screens
+# and what ?count= asks the adapter for; DET_ROWS 22 is just under two
+# detail pages, and cannot go below 22 -- the picker's list is overlaid on
+# the buffer it sizes (see GC_CALS_OVERLAY in gcal.h) and needs 720 of its
+# bytes. TITLE_LEN 36 shows 35 title characters in the two-row panel where
+# 40 showed 39 ("09:00-10:00  " takes 13 of the panel's 64). GC_RXBUF 128
+# only costs round trips -- every reader drains through split_lines(),
+# which is indifferent to chunk boundaries.
 CFLAGS_EXTRA_COCO  = -DLIST_ROWS=11 -DPICK_ROWS=10 -DDET_WIN=12
-CFLAGS_EXTRA_COCO += -DDET_COLS=32 -DDET_ROWS=24
-CFLAGS_EXTRA_COCO += -DMAX_EVENTS=32 -DTITLE_LEN=40
-CFLAGS_EXTRA_COCO += -DGC_RXBUF=256
+CFLAGS_EXTRA_COCO += -DDET_COLS=32 -DDET_ROWS=22
+CFLAGS_EXTRA_COCO += -DMAX_EVENTS=24 -DTITLE_LEN=36
+CFLAGS_EXTRA_COCO += -DGC_RXBUF=96
+
+# The compose form's buffer and the picker's list both ride on top of the
+# detail rows (see gcal.h) -- the 27K ceiling had no room for the form's
+# code, let alone more statics, so every borrowable buffer is borrowed and
+# LINE_CAP comes down to what a width-80 line can actually need. Keep in
+# step with CFLAGS32 in tests/Makefile.
+CFLAGS_EXTRA_COCO += -DGC_FORM_OVERLAY -DGC_CALS_OVERLAY -DLINE_CAP=96
 
 # fujinet-lib declares clock_get_tz for every platform but only builds it for
 # some: the CoCo archive carries fn_clock/clock_get_time.o and nothing else, so
@@ -148,25 +216,34 @@ CFLAGS_EXTRA_COCO += -Isrc/coco/include
 CFLAGS_EXTRA_COCO += $(COCO_SHOT_FLAGS)
 
 # With Disk BASIC present a BASIC program lives at $0E00, so the one thing the
-# org must not do is collide with the AUTOEXEC that is running LOADM. $1000
-# leaves that program 512 bytes -- it is one line, about 25 tokenised bytes,
-# with no variables -- and gives us $1000 to $7C00, which is 27,648 for code,
-# data and bss.
+# org must not do is collide with the AUTOEXEC that is running LOADM. $0E80
+# leaves that program 128 bytes -- it is one line, about 25 tokenised bytes,
+# with no variables. The org was $1000 until the compose form needed the
+# difference.
 #
 # Other CoCo clients in this family (fujinet-news, fujinet-config) org at $0E00
 # and pay for it with a second-stage loader that pokes BASIC's direct-mode
 # buffer and jumps into RUNM. That trick is ROM-version sensitive -- it gives
-# ?UL ERROR on stock Disk BASIC 1.1 -- and 512 bytes is a cheaper price than a
+# ?UL ERROR on stock Disk BASIC 1.1 -- and 256 bytes is a cheaper price than a
 # whole extra binary with its own file-type trap.
 #
-# The stack is placed explicitly rather than inherited from BASIC. LOADM leaves
-# S wherever CLEAR put it, which moves if anyone edits the AUTOEXEC; $7F00
-# grows down into the 3K between our end and BASIC's string space and does not.
+# The stack is placed explicitly rather than inherited from BASIC. LOADM
+# leaves S wherever CLEAR put it, which moves if anyone edits the AUTOEXEC;
+# ours does not. It lives at $0D00, growing down toward the text screen at
+# $0400-$05FF -- 1.7K of headroom for a program whose call depth never
+# nears it. That region is Disk BASIC's buffer/graphics-page space, which
+# only matters while LOADM itself is running: by the time EXEC hands over
+# and the start code loads S, the disk is done, FujiNet I/O is the
+# bit-banger, and BASIC's own 60Hz IRQ pushes wherever S points. Moving
+# the stack down is what let --limit rise to $7F00: the whole 768-byte gap
+# the stack used to need at the top now holds program instead, and $7F00
+# still leaves BASIC a page to come back to after EXEC returns.
 #
-# --limit is what turns "silently corrupts the stack" into a build failure, so
-# it goes in from the first link rather than after the first mystery. -i keeps
-# the .map, which tools/coco-shot.sh reads its breakpoint symbol out of.
-LDFLAGS_EXTRA_COCO  = --org=1000 --limit=7C00 --initial-s=7F00
+# --limit is what turns "silently corrupts the top of memory" into a build
+# failure, so it goes in from the first link rather than after the first
+# mystery. -i keeps the .map, which tools/coco-shot.sh reads its
+# breakpoint symbol out of.
+LDFLAGS_EXTRA_COCO  = --org=0E80 --limit=7F00 --initial-s=0D00
 LDFLAGS_EXTRA_COCO += --no-relocate -i
 
 # The disk carries GCAL.BIN and nothing else. It is started with
@@ -229,6 +306,10 @@ CFLAGS_EXTRA_MSDOS += -DDET_LINE_CAP=512 -DDET_REFLOW -DGC_KEEP_CAT
 CFLAGS_EXTRA_MSDOS += -DLIST_ROWS=18 -DPICK_ROWS=14 -DDET_WIN=20
 CFLAGS_EXTRA_MSDOS += -DGC_RXBUF=1024
 
+# The compose form's field capacities, widened like the Apple's -- DGROUP
+# has the room and the 80-column layout has the columns.
+CFLAGS_EXTRA_MSDOS += -DFRM_LOC_MAX=50 -DFRM_DESC_MAX=160
+
 # tools/msdos-shot.sh appends -DGC_FAKE_DATA / -DGC_SHOT / -DGC_FAKE_KEYS_STR
 # through here -- this variable carries every screen-shape knob above and a
 # command-line assignment would replace the lot.
@@ -268,7 +349,7 @@ include mekkogx/toplevel-rules.mk
 #   coco/r2r:: coco/custom-step1
 #   coco/r2r:: coco/custom-step2
 # or
-#   apple2/disk: apple2/custom-step1 apple2/custom-step2
+#   apple2enh/disk: apple2enh/custom-step1 apple2enh/custom-step2
 
 # The MS-DOS disk is a bootless 360K FAT image (mformat lays no system
 # tracks -- SYS A: it from a DOS disk) carrying GCAL.EXE and the FujiNet

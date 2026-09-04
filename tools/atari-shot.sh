@@ -42,9 +42,12 @@ EXTRA=""
 [ -n "$KEYS" ] && EXTRA="$EXTRA -DGC_FAKE_KEYS=$KEYS"
 
 # make keys off timestamps, not flags, so changing -D would otherwise silently
-# relink the previous variant's object files.
+# relink the previous variant's object files. The shot flags ride in through
+# ATARI_SHOT_FLAGS rather than a CFLAGS_EXTRA_ATARI assignment: that variable
+# now carries the form overlay and RAM knobs in the Makefile, and a
+# command-line assignment would replace the lot.
 rm -rf build/gcal/atari
-if ! $BUILD atari/product CFLAGS_EXTRA_ATARI="$EXTRA" >"$OUTDIR/build" 2>&1; then
+if ! $BUILD atari/product ATARI_SHOT_FLAGS="$EXTRA" >"$OUTDIR/build" 2>&1; then
     cat "$OUTDIR/build"; echo "BUILD FAILED"; rm -rf "$OUTDIR"; exit 1
 fi
 rm -f "$OUTDIR/build"

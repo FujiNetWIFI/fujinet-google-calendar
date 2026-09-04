@@ -28,6 +28,13 @@ lit_hint2:
     DATA 48,84,79,68,65,89,32,57,75,69,89,83,32,67,76,82,83,69,84,32
     CONST LEN_HINT2 = 20
 
+' Page 3 "5NEW 6EDIT". Compose and edit could not be folded into the two pages
+' above -- page 1 had three trailing spaces and page 2 one.
+lit_hint3:
+    DATA 53,78,69,87,32,54,69,68,73,84,32,32,32,32,32,32,32,32,32,32
+    CONST LEN_HINT3 = 20
+    CONST VW_HINTPGS = 3
+
 ' Error strings, one row each.
 lit_e_auth:
     DATA 65,85,84,72,79,82,73,90,69,32,87,69,66,32,85,73,32,32
@@ -164,20 +171,25 @@ vw_status_line: PROCEDURE
 END
 
 ' ---------------------------------------------------------------------------
-' vw_hints: row 11. Two pages, toggled by the disc so both fit twenty columns.
+' vw_hints: row 11. Three pages, cycled by keypad 9, because twenty columns
+' will not hold the key list.
 ' ---------------------------------------------------------------------------
 vw_hints: PROCEDURE
     s_row = ROW_HINT : s_col = 0 : s_col_color = COL_NORMAL
     IF vw_hintpg = 0 THEN
         vl_len = LEN_HINT : #vw_p = VARPTR lit_hint(0)
-    ELSE
+    ELSEIF vw_hintpg = 1 THEN
         vl_len = LEN_HINT2 : #vw_p = VARPTR lit_hint2(0)
+    ELSE
+        vl_len = LEN_HINT3 : #vw_p = VARPTR lit_hint3(0)
     END IF
     GOSUB vw_puts_lit
     ' Highlight just the digits, so the key to press reads at a glance. One
     ' pass over the row costs far less ROM than splitting the hint into
-    ' separately coloured PRINT fragments.
-    IF vw_hintpg = 0 THEN
+    ' separately coloured PRINT fragments. Page 2 is exempt: "0TODAY" and
+    ' "9KEYS" are key names, but so is nothing else on it -- and page 3 is
+    ' all key names, so it gets the pass too.
+    IF vw_hintpg <> 1 THEN
         s_col_color = COL_HILIGHT
         GOSUB scr_hilite_digits
     END IF
@@ -315,8 +327,27 @@ vw_common_keys: PROCEDURE
         RETURN
     END IF
     IF in_key = KEYPAD_9 THEN
-        vw_hintpg = 1 - vw_hintpg
+        vw_hintpg = vw_hintpg + 1
+        IF vw_hintpg >= VW_HINTPGS THEN vw_hintpg = 0
         GOSUB vw_hints
+        RETURN
+    END IF
+    IF in_key = KEYPAD_5 THEN
+        GOSUB frm_new
+        RETURN
+    END IF
+    IF in_key = KEYPAD_6 THEN
+        ' Only where a single event is actually selected. In WEEK a row is a
+        ' day and in MONTH a cell is a date, so vw_sel_event's row-to-index
+        ' shortcut would hand back an index that means nothing here -- the
+        ' same reason the C clients leave E inert in those two views.
+        IF cur_view = VIEW_DAY OR cur_view = VIEW_AGENDA THEN
+            GOSUB vw_sel_event
+            IF vw_n <> VW_NO_EVENT THEN
+                ev_sel = vw_n
+                GOSUB frm_edit_event
+            END IF
+        END IF
         RETURN
     END IF
     IF in_key = KEYPAD_CLEAR THEN

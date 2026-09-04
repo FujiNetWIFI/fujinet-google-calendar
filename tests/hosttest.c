@@ -735,6 +735,232 @@ static void test_lines(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* form.c                                                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The emission checks compare whole lines byte for byte, because the draft
+ * parser on the other end is exact about its KEY: shape and this is the
+ * only place the client's half of that contract is pinned down. On the
+ * host '\n' is LF, one of the terminators the adapter accepts.
+ *
+ * form_put() is form.c's one outward call -- net.c's in the real program,
+ * this capture here, which is also why net.c is not in this link.
+ *
+ * Runs before test_detail on purpose: under GC_FORM_OVERLAY the form
+ * scribbles over gc_det, and the detail tests then proving the buffer
+ * rebuilds from scratch is exactly the property the overlay relies on.
+ */
+
+static unsigned char emit_count;
+static char          emit_seen[8][FRM_LINE_MAX];
+
+void form_put(const char *line)
+{
+    strcpy(emit_seen[emit_count++], line);
+}
+
+static void test_form(void)
+{
+    struct event  e;
+    unsigned char bad;
+
+    puts("form");
+
+    /* The overlay guards run in #if, so they lean on FRMBUF_SIZE being the
+       real sizeof -- true while the struct holds nothing but chars. The
+       same property carries form_field_ptr()'s offset table, so each
+       pointer is asserted to be the member it claims. */
+    eq_int("frmbuf size arithmetic", (long) sizeof(struct frmbuf),
+           FRMBUF_SIZE);
+    eq_int("ptr title", form_field_ptr(FRM_TITLE) == frm.title, 1);
+    eq_int("ptr date", form_field_ptr(FRM_DATE) == frm.date, 1);
+    eq_int("ptr start", form_field_ptr(FRM_START) == frm.start, 1);
+    eq_int("ptr end", form_field_ptr(FRM_END) == frm.end, 1);
+    eq_int("ptr loc", form_field_ptr(FRM_LOC) == frm.loc, 1);
+    eq_int("ptr desc", form_field_ptr(FRM_DESC) == frm.desc, 1);
+    eq_int("ptr cat", form_field_ptr(FRM_CAT) == frm.cat, 1);
+
+    /* -------------------------------------------------- init */
+
+    form_init(0, 2026, 9, 1);
+    eq_str("new date prefill", frm.date, "2026-09-01");
+    eq_str("new title empty", frm.title, "");
+    eq_str("new start empty", frm.start, "");
+    eq_int("new nothing dirty", form_any_dirty(), 0);
+
+    memset(&e, 0, sizeof e);
+    strcpy(e.title, "Dentist");
+    e.sh = 14; e.sm = 0; e.eh = 14; e.em = 30;
+
+    form_init(&e, 2026, 9, 1);
+    eq_str("edit title prefill", frm.title, "Dentist");
+    eq_str("edit date prefill", frm.date, "2026-09-01");
+    eq_str("edit start prefill", frm.start, "14:00");
+    eq_str("edit end prefill", frm.end, "14:30");
+    eq_str("edit loc blank", frm.loc, "");
+    eq_int("edit nothing dirty", form_any_dirty(), 0);
+
+    e.flags = EVF_ALLDAY;
+    form_init(&e, 2026, 9, 1);
+    eq_str("all-day start blank", frm.start, "");
+    eq_str("all-day end blank", frm.end, "");
+
+    e.flags = EVF_OPENEND;
+    form_init(&e, 2026, 9, 1);
+    eq_str("open-end start kept", frm.start, "14:00");
+    eq_str("open-end end blank", frm.end, "");
+
+    /* -------------------------------------------------- validators */
+
+    eq_int("date ok", form_date_ok("2026-09-01"), 1);
+    eq_int("date leap ok", form_date_ok("2024-02-29"), 1);
+    eq_int("date feb 30", form_date_ok("2026-02-30"), 0);
+    eq_int("date feb 29 off-year", form_date_ok("2025-02-29"), 0);
+    eq_int("date month 13", form_date_ok("2026-13-01"), 0);
+    eq_int("date day 0", form_date_ok("2026-09-00"), 0);
+    eq_int("date short month", form_date_ok("2026-9-01"), 0);
+    eq_int("date trailing junk", form_date_ok("2026-09-011"), 0);
+
+    eq_int("time ok", form_time_ok("09:05"), 1);
+    eq_int("time short hour", form_time_ok("9:05"), 1);
+    eq_int("time last minute", form_time_ok("23:59"), 1);
+    eq_int("time hour 24", form_time_ok("24:00"), 0);
+    eq_int("time minute 60", form_time_ok("12:60"), 0);
+    eq_int("time short minute", form_time_ok("9:5"), 0);
+    eq_int("time empty", form_time_ok(""), 0);
+
+    /* -------------------------------------------------- compose validation */
+
+    form_init(0, 2026, 9, 1);
+    eq_int("compose needs title", form_validate(0, &bad), FM_NEEDTITLE);
+    eq_int("  cursor to title", bad, FRM_TITLE);
+
+    strcpy(frm.title, "Dentist");
+    strcpy(frm.date, "2026-02-30");
+    eq_int("compose bad date", form_validate(0, &bad), FM_BADDATE);
+
+    strcpy(frm.date, "2026-09-01");
+    strcpy(frm.end, "10:00");
+    eq_int("compose end alone", form_validate(0, &bad), FM_ENDALONE);
+    eq_int("  cursor to start", bad, FRM_START);
+
+    strcpy(frm.start, "9:99");
+    eq_int("compose bad time", form_validate(0, &bad), FM_BADTIME);
+
+    strcpy(frm.start, "9:30");
+    eq_int("compose valid", form_validate(0, &bad), FM_NONE);
+
+    /* -------------------------------------------------- compose emission */
+
+    form_init(0, 2026, 9, 1);
+    strcpy(frm.title, "Dentist");
+    strcpy(frm.start, "14:00");
+    strcpy(frm.end, "14:30");
+    strcpy(frm.loc, "12 High St");
+    strcpy(frm.desc, "Bring the card");
+    strcpy(frm.cat, "Banana");
+
+    emit_count = 0;
+    eq_int("compose emits 6", form_emit(0), 6);
+    eq_int("  all captured", emit_count, 6);
+    eq_str("compose summary", emit_seen[0], "SUMMARY: Dentist\n");
+    eq_str("compose start", emit_seen[1], "START: 2026-09-01 14:00\n");
+    eq_str("compose end", emit_seen[2], "END: 2026-09-01 14:30\n");
+    eq_str("compose location", emit_seen[3], "LOCATION: 12 High St\n");
+    eq_str("compose description", emit_seen[4], "DESCRIPTION: Bring the card\n");
+    eq_str("compose category", emit_seen[5], "CATEGORY: Banana\n");
+
+    /* Minimal all-day: a blank START time is a date-only START, which is
+       the wire's spelling of all-day. */
+    form_init(0, 2026, 9, 1);
+    strcpy(frm.title, "Company holiday");
+    emit_count = 0;
+    eq_int("all-day emits 2", form_emit(0), 2);
+    eq_str("all-day summary", emit_seen[0], "SUMMARY: Company holiday\n");
+    eq_str("all-day start", emit_seen[1], "START: 2026-09-01\n");
+
+    /* A typed single-digit hour goes out normalised, so the adapter only
+       ever sees the two-digit form its parser documents. */
+    form_init(0, 2026, 9, 1);
+    strcpy(frm.title, "Early");
+    strcpy(frm.start, "9:05");
+    emit_count = 0;
+    form_emit(0);
+    eq_str("normalised hour", emit_seen[1], "START: 2026-09-01 09:05\n");
+
+    /* -------------------------------------------------- edit emission */
+
+    memset(&e, 0, sizeof e);
+    strcpy(e.title, "Dentist");
+    e.sh = 14; e.sm = 0; e.eh = 14; e.em = 30;
+
+    /* Only the dirty field goes out: the adapter patches exactly what it
+       receives, so the untouched title never clobbers the server's copy. */
+    form_init(&e, 2026, 9, 1);
+    strcpy(frm.start, "15:00");
+    frm_dirty[FRM_START] = 1;
+    emit_count = 0;
+    eq_int("edit emits 1", form_emit(1), 1);
+    eq_str("edit start only", emit_seen[0], "START: 2026-09-01 15:00\n");
+
+    /* A date change alone still sends the timed form -- the prefilled time
+       rides along, so the event cannot silently become all-day. */
+    form_init(&e, 2026, 9, 1);
+    strcpy(frm.date, "2026-09-03");
+    frm_dirty[FRM_DATE] = 1;
+    emit_count = 0;
+    eq_int("edit move emits 1", form_emit(1), 1);
+    eq_str("edit move keeps time", emit_seen[0], "START: 2026-09-03 14:00\n");
+
+    /* Blanking the START time is the one meaningful blank: date-only START
+       is how the wire says all-day, and there is no other way to say it. */
+    form_init(&e, 2026, 9, 1);
+    frm.start[0] = '\0';
+    frm.end[0] = '\0';
+    frm_dirty[FRM_START] = 1;
+    frm_dirty[FRM_END] = 1;
+    emit_count = 0;
+    eq_int("edit to all-day emits 1", form_emit(1), 1);
+    eq_str("edit to all-day", emit_seen[0], "START: 2026-09-01\n");
+
+    /* END alone: the adapter keeps the start. */
+    form_init(&e, 2026, 9, 1);
+    strcpy(frm.end, "15:30");
+    frm_dirty[FRM_END] = 1;
+    emit_count = 0;
+    eq_int("edit end emits 1", form_emit(1), 1);
+    eq_str("edit end only", emit_seen[0], "END: 2026-09-01 15:30\n");
+
+    /* Title edit. */
+    form_init(&e, 2026, 9, 1);
+    strcpy(frm.title, "Dentist (moved)");
+    frm_dirty[FRM_TITLE] = 1;
+    emit_count = 0;
+    eq_int("edit title emits 1", form_emit(1), 1);
+    eq_str("edit title", emit_seen[0], "SUMMARY: Dentist (moved)\n");
+
+    /* Nothing touched, nothing sent -- and a field touched back to blank
+       is "leave it alone", not "clear it". Zero lines is what tells
+       compose.c the close is an abort, not a commit. */
+    form_init(&e, 2026, 9, 1);
+    emit_count = 0;
+    eq_int("edit untouched sends nothing", form_emit(1), 0);
+    frm_dirty[FRM_LOC] = 1;
+    eq_int("edit blanked loc sends nothing", form_emit(1), 0);
+    eq_int("  nothing captured", emit_count, 0);
+
+    /* Edit validation: an END time on an all-day form is the adapter's
+       MIXED_FORMS rejection; catch it while it can still be fixed. */
+    e.flags = EVF_ALLDAY;
+    form_init(&e, 2026, 9, 1);
+    strcpy(frm.end, "10:00");
+    frm_dirty[FRM_END] = 1;
+    eq_int("edit end on all-day", form_validate(1, &bad), FM_ENDALONE);
+    e.flags = 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* detail.c                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -1043,6 +1269,7 @@ int main(void)
     test_sanitize();
     test_wrap();
     test_lines();
+    test_form();
     test_detail();
 #ifdef DET_REFLOW
     test_detail_reflow();

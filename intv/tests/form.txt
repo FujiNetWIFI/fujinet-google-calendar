@@ -1,0 +1,29 @@
+# form.txt -- keypad 5 opens a blank compose form on the anchor date.
+#
+# Needs a FujiNet (JZINTV_ARGS=--fujinet=host:port): gcal halts at boot without
+# a clock, so every test past boot.txt does.
+bp label_IN_POLL
+hit
+key 5
+snap
+expect 0 NEW EVENT
+# All seven draft fields, one per row, on exactly the rows t9_entry leaves
+# alone. If this list ever gets shorter the editor is overlapping the form.
+expect 4 TITLE
+expect 5 DATE
+expect 6 START
+expect 7 END
+expect 8 WHERE
+expect 9 NOTES
+expect 10 CAT
+# The date is prefilled from the view anchor; nothing else is.
+expect 5 2026-
+expect-not 4 20
+# The selection is a colour-stack bar, invisible to the text decode, so it is
+# asserted on the advance bit itself. A form opens on TITLE, row 4.
+expect-bar 4
+expect-no-bar 5
+disc down
+snap
+expect-no-bar 4
+expect-bar 5

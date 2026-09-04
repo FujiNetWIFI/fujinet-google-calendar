@@ -39,9 +39,10 @@
     CONST AL_BANNER_FRAMES = 240   ' ~4s at 60Hz
     CONST AL_CHIME_STEP    = 8     ' frames per chime note
 
-    DIM al_lead, al_active, al_frames, al_note, al_ev
+' al_active is DIM'd in constants.bas -- st_view.bas reads it, and this file
+' is included after that one.
+    DIM al_lead, al_frames, al_note, al_ev
     DIM al_i, al_now, al_evm, al_flags
-    DIM #al_p, #al_delta
 
 ' ---------------------------------------------------------------------------
 ' al_init: called once at boot, after the AppKey read has had its say.
@@ -75,16 +76,16 @@ al_scan: PROCEDURE
     al_now = clk_h * 60 + clk_mi
 
     FOR al_i = 0 TO ev_count - 1
-        #al_p = SC_EVT + al_i * EVT_STRIDE
-        al_flags = PEEK(#al_p + EVT_FLAGS) AND 255
+        #evrec = SC_EVT + al_i * EVT_STRIDE
+        al_flags = PEEK(#evrec + EVT_FLAGS) AND 255
         IF (al_flags AND EVF_FIRED) = 0 THEN
             ' All-day events have no meaningful start minute to count down to.
             IF (al_flags AND EVF_ALLDAY) = 0 THEN
-                al_evm = (PEEK(#al_p + EVT_SH) AND 255) * 60 + (PEEK(#al_p + EVT_SM) AND 255)
+                al_evm = (PEEK(#evrec + EVT_SH) AND 255) * 60 + (PEEK(#evrec + EVT_SM) AND 255)
                 IF al_evm >= al_now THEN
                     IF al_evm - al_now <= al_lead THEN
                         al_ev = al_i
-                        POKE (#al_p + EVT_FLAGS), al_flags + EVF_FIRED
+                        POKE (#evrec + EVT_FLAGS), al_flags + EVF_FIRED
                         GOSUB al_fire
                         RETURN
                     END IF
@@ -111,7 +112,7 @@ END
 ' does not shift a stack position.
 ' ---------------------------------------------------------------------------
 al_run: PROCEDURE
-    #al_p = SC_EVT + al_ev * EVT_STRIDE
+    #evrec = SC_EVT + al_ev * EVT_STRIDE
 
     ' Flash by alternating the banner colour every 16 frames.
     s_row = ROW_HINT

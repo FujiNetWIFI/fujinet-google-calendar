@@ -37,7 +37,7 @@ static unsigned char have_list;  /* a usable listing is on screen */
 static AdapterConfigExtended ace;
 #endif
 
-static void do_detail(void);
+static unsigned char do_detail(void);
 static void do_setup(void);
 static void do_pick(void);
 
@@ -226,6 +226,19 @@ static void month_move(signed char days)
         ui_view(VIEW_MONTH, 0, 0);
 }
 
+/* Walk (y, mo, d) from wherever it is in the shown week to the day the WEEK
+   selection names: back to the week's Sunday, forward sel days. ENTER's
+   drill-down runs it on the anchor itself; K_NEW on a copy. */
+static void week_walk(unsigned int *y, unsigned char *mo, unsigned char *d)
+{
+    unsigned char n = date_dow(*y, *mo, *d);
+
+    while (n--)
+        date_subday(y, mo, d);
+    for (n = 0; n < sel; n++)
+        date_addday(y, mo, d);
+}
+
 /* The event under the selection, or AL_NONE when it is not on one. */
 static unsigned char sel_event(void)
 {
@@ -245,7 +258,10 @@ static unsigned char sel_event(void)
 /* Event detail                                                        */
 /* ------------------------------------------------------------------ */
 
-static void do_detail(void)
+/* Returns 1 when the user asked to edit this event, which the caller runs
+   after the detail screen is abandoned -- it has to be: the form may be
+   overlaid on the very buffer the detail rows live in. */
+static unsigned char do_detail(void)
 {
     unsigned char ev = sel_event();
     unsigned int  top = 0;
@@ -253,13 +269,13 @@ static void do_detail(void)
     unsigned char k;
 
     if (ev == AL_NONE)
-        return;
+        return 0;
 
     ui_busy(BUSY_DETAIL);
     if (!gc_fetch_detail(view, gc_index[ev].num)) {
         ui_error(gc_ecode);
         plat_anykey();
-        return;
+        return 0;
     }
 
     ui_detail(ev, top);
@@ -295,10 +311,13 @@ static void do_detail(void)
             ui_detail(ev, top);
             break;
 
+        case K_EDIT:
+            return 1;
+
         case K_BACK:
         case K_ENTER:
         case K_QUIT:
-            return;             /* and deliberately without setting dirty */
+            return 0;           /* and deliberately without setting dirty */
         }
     }
 }
@@ -561,17 +580,48 @@ int main(void)
             if (view == VIEW_MONTH || view == VIEW_WEEK) {
                 /* Drill into the selected day. MONTH's cursor is already the
                    anchor; WEEK has to walk from the week's Sunday. */
-                if (view == VIEW_WEEK) {
-                    unsigned char n = date_dow(cur_y, cur_mo, cur_d);
-                    while (n--)
-                        date_subday(&cur_y, &cur_mo, &cur_d);
-                    for (n = 0; n < sel; n++)
-                        date_addday(&cur_y, &cur_mo, &cur_d);
-                }
+                if (view == VIEW_WEEK)
+                    week_walk(&cur_y, &cur_mo, &cur_d);
                 view = VIEW_DAY;
                 dirty = 1;
             } else {
-                do_detail();
+                if (do_detail()) {
+                    unsigned char ev = sel_event();
+                    if (ev != AL_NONE && compose_edit(view, ev))
+                        dirty = 1;
+                }
+                shown = 0;
+            }
+            break;
+
+        case K_NEW:
+            /* Compose lands on the date under the user: the anchor, except
+               in WEEK where the selection names a day of the shown week. */
+            {
+                unsigned int  y = cur_y;
+                unsigned char mo = cur_mo;
+                unsigned char d = cur_d;
+
+                if (view == VIEW_WEEK)
+                    week_walk(&y, &mo, &d);
+
+                if (compose_new(y, mo, d))
+                    dirty = 1;
+                shown = 0;
+            }
+            break;
+
+        case K_EDIT:
+            /* Only DAY and AGENDA resolve a selected event -- in WEEK and
+               MONTH the key is inert, exactly as ENTER means something
+               different there. */
+            {
+                unsigned char ev = sel_event();
+
+                if (ev == AL_NONE)
+                    break;
+                if (compose_edit(view, ev))
+                    dirty = 1;
                 shown = 0;
             }
             break;

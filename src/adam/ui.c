@@ -75,13 +75,24 @@ static const struct sk_set SK_LIST = {
  * for something that cannot happen.
  */
 static const struct sk_set SK_MORE = {
-    { "Refresh", "Setup", "Quit", 0, 0, "Back" },
-    { K_REFRESH, K_BACK, K_QUIT, K_NONE, K_NONE, K_SKBANK }
+    { "Refresh", "Setup", "Quit", "New", "Edit", "Back" },
+    { K_REFRESH, K_BACK, K_QUIT, K_NEW, K_EDIT, K_SKBANK }
 };
 
 static const struct sk_set SK_DETAIL = {
-    { "Pg Up", "Pg Dn", "Up", "Down", 0, "Back" },
-    { K_LEFT, K_RIGHT, K_UP, K_DOWN, K_NONE, K_BACK }
+    { "Pg Up", "Pg Dn", "Up", "Down", "Edit", "Back" },
+    { K_LEFT, K_RIGHT, K_UP, K_DOWN, K_EDIT, K_BACK }
+};
+
+/*
+ * The compose form's bank carries E_* editor codes, not K_* ones --
+ * plat_getch() reads the same sk_key[] table sk_bind() fills, so the band
+ * works in the form without any second mechanism. "Save" skips the
+ * save-or-discard ask that "Done" poses when something was typed.
+ */
+static const struct sk_set SK_FORM = {
+    { "Up", "Down", 0, 0, "Save", "Done" },
+    { E_UP, E_DOWN, K_NONE, K_NONE, E_SAVE, E_DONE }
 };
 
 static const struct sk_set SK_PICK = {
@@ -191,6 +202,9 @@ static const char *status_text(void)
         case GC_DENIED:     return "Authorize in the web UI";
         case GC_NOAUTH:     return "Not authorized";
         case GC_NOSERVICE:  return "Service unavailable";
+        case GC_BADDRAFT:   return "Rejected - check fields";
+        case GC_FULL:       return "Draft too large";
+        case GC_RDONLY:     return "Calendar is read-only";
         default:            return "Calendar error";
         }
     }
@@ -297,6 +311,9 @@ void ui_busy(unsigned char reason)
         break;
     case BUSY_CALS:
         scr_center(9, "Reading calendars...", A_BODY);
+        break;
+    case BUSY_SAVE:
+        scr_center(9, "Saving event...", A_BODY);
         break;
     default:
         scr_center(9,  "Fetching calendar...", A_BODY);
@@ -499,6 +516,8 @@ void ui_setup(void)
              A_BODY);
     scr_text((unsigned char) (LEAD_ROW + 5), 1, "ENTER open     Q quit",
              A_BODY);
+    scr_text((unsigned char) (LEAD_ROW + 6), 1, "N new event    E edit",
+             A_BODY);
 }
 
 /* Redraw just the lead line, so holding Less or More does not repaint the
@@ -506,4 +525,89 @@ void ui_setup(void)
 void ui_setup_lead(void)
 {
     setup_lead();
+}
+
+/* ------------------------------------------------------------------ */
+/* Compose / edit form                                                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The settings screen's arrangement: gray captions over black values on the
+ * white page, the header band up top, and the SmartKeys carrying the
+ * actions -- SK_FORM's slots hold E_* codes, which is the whole trick.
+ * The active field is the selection bar with the cursor cell knocked back
+ * to the body attribute, a hole in the bar; scr_attr() can repaint that
+ * one cell without touching the glyph under it, which no other backend can.
+ * Messages go on STAT_ROW, the same row the views use for the alarm text.
+ */
+
+static const unsigned char frm_rows[FRM_NFIELDS] = { 4, 6, 7, 8, 10, 12, 14 };
+
+#define FRM_VAL_COL     7
+#define FRM_HINT_ROW    16
+
+static const unsigned char frm_w[FRM_NFIELDS] = {
+    24, FRM_DATE_MAX + 1, FRM_TIME_MAX + 1, FRM_TIME_MAX + 1, 24, 24, 16
+};
+
+unsigned char ui_form_width(unsigned char f)
+{
+    return frm_w[f];
+}
+
+void ui_form(unsigned char editing)
+{
+    unsigned char f;
+
+    scr_clear();
+    sk_bind(&SK_FORM);
+
+    scr_attr(0, 0, SCR_COLS, A_HEADER);
+    scr_attr(1, 0, SCR_COLS, A_HEADER);
+    scr_attr(2, 0, SCR_COLS, A_HDR_DIM);
+    logo_small(LOGO_ROW, LOGO_COL);
+    scr_field(0, HDR_TEXT_COL, editing ? "Edit event" : "New event",
+              TITLE_W, A_HEADER);
+    scr_field(1, HDR_TEXT_COL, "", TITLE_W, A_HEADER);
+    scr_field(2, 0, "", SCR_COLS, A_HDR_DIM);
+
+    for (f = 0; f < FRM_NFIELDS; f++)
+        scr_text(frm_rows[f], 1,
+                 "Title\0Date\0\0Start\0End\0\0\0Where\0Notes\0Cat" + f * 6,
+                 A_DIM);
+
+    scr_text(FRM_HINT_ROW, 1, "Blank start = all day", A_DIM);
+    if (editing)
+        scr_text((unsigned char) (FRM_HINT_ROW + 1), 1,
+                 "Blank field = unchanged", A_DIM);
+}
+
+void ui_form_row(unsigned char f, const char *win, unsigned char curx,
+                 unsigned char active)
+{
+    unsigned char row = frm_rows[f];
+
+    scr_field(row, FRM_VAL_COL, win, frm_w[f],
+              (unsigned char) (active ? A_SEL : A_BODY));
+
+    if (active)
+        scr_attr(row, (unsigned char) (FRM_VAL_COL + curx), 1, A_BODY);
+}
+
+void ui_form_msg(unsigned char msg)
+{
+    const char *s;
+
+    scr_row_clear(STAT_ROW);
+
+    switch (msg) {
+    case FM_ASK:       s = "Save event? (Y/N)";              break;
+    case FM_NEEDTITLE: s = "A title is required";            break;
+    case FM_BADDATE:   s = "Date must be YYYY-MM-DD";        break;
+    case FM_BADTIME:   s = "Time must be HH:MM";             break;
+    case FM_ENDALONE:  s = "An end time needs a start time"; break;
+    default:           return;                  /* FM_NONE: cleared above */
+    }
+
+    scr_field(STAT_ROW, 0, s, SCR_COLS, A_SEL);
 }

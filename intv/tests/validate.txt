@@ -1,0 +1,26 @@
+# validate.txt -- the masked numeric editor, and compose refusing an untitled
+# draft before it opens a channel.
+#
+# Client-side validation is not belt-and-braces: the adapter collapses every
+# draft rejection into one code (132), so a check that does not happen here
+# reaches the user as "REJECTED BY GOOGLE" with no reason.
+bp label_IN_POLL
+hit
+key 5
+disc down
+disc down
+btn
+key 0
+key 9
+key 3
+key 0
+snap
+# Digits fill the mask's slots; the colon is laid down by the editor.
+expect 6 START 09:30
+key 11
+key 11
+snap
+expect 2 NEED A TITLE
+# Nothing was sent, so nothing changed and the form is still up.
+expect 0 NEW EVENT
+expect 6 START 09:30
