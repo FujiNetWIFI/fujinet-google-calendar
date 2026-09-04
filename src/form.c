@@ -1,4 +1,11 @@
 /*
+ * Not built into the CoCo 3 client: there it is a separate binary and
+ * src/coco/chain.c is the seam. Every other platform, the CoCo 1/2
+ * included, compiles this in-process as usual.
+ */
+#ifndef GC_CHAIN_EDIT
+
+/*
  * The compose/edit form model: field storage, validation, and the exact
  * KEY: value lines the calendar adapter's draft parser takes.
  *
@@ -28,7 +35,12 @@
  * the build fails right here when a knob moves and it stops being true.
  * The cals guard is the *sum* -- the picker's list sits behind the form.
  */
+#ifdef COCO3
+/* The borrowed base is gc_scratch here, not gc_det -- see gcal.h. */
+#define GC_DET_SIZE     GC_SCRATCH_SIZE
+#else
 #define GC_DET_SIZE     (DET_ROWS * DET_STRIDE)
+#endif
 
 #ifdef GC_FORM_OVERLAY
 #if FRMBUF_SIZE > GC_DET_SIZE
@@ -107,7 +119,14 @@ void form_init(const struct event *e, unsigned int y,
     date_iso(frm.date, y, mo, d);
 
     if (e) {
+#ifdef COCO3
+        /* The title is in far storage on that build, so it is fetched by index
+           -- e always points into gc_index, which is where the index comes
+           from. See src/coco/far.c. */
+        strcpy(frm.title, ev_title((unsigned char) (e - gc_index)));
+#else
         strcpy(frm.title, e->title);
+#endif
         if (!(e->flags & EVF_ALLDAY)) {
             put_hm(frm.start, e->sh, e->sm);
             if (!(e->flags & EVF_OPENEND))
@@ -358,3 +377,5 @@ unsigned char form_emit(unsigned char editing)
 
     return n;
 }
+
+#endif /* !GC_CHAIN_EDIT */

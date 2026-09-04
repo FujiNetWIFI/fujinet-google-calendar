@@ -1,5 +1,5 @@
 /*
- * The Google Calendar mark, in semigraphics.
+ * The Google Calendar mark.
  *
  * Both marks are tables of SG4 bytes copied straight into screen RAM. The
  * constraint that shapes them is that all four quadrants of one cell share one
@@ -37,6 +37,68 @@
  * Four cells on two rows, which is 32 x 24 pixels. It costs the header no
  * rows -- the header is two rows whatever goes in it.
  */
+#ifdef COCO3
+
+/*
+ * The same two marks on the attribute plane.
+ *
+ * The colors are the ring; the page inside it is the screen's own PAL_PAGE, so
+ * the mark reads as a bordered page rather than a block. The "31" is not
+ * punched out of it the way the VDG build has to -- this machine has white
+ * text and a real character cell, so the digits are printed, which is what the
+ * Atari and the Apple both do.
+ */
+
+#define MK_BLUE     ATTR(FG_PAPER, PAL_BLUE)
+#define MK_RED      ATTR(FG_PAPER, PAL_RED)
+#define MK_GREEN    ATTR(FG_PAPER, PAL_GREEN)
+#define MK_YELLOW   ATTR(FG_PAPER, PAL_YELLOW)
+#define MK_PAPER    A_TEXT
+
+static const unsigned char mark_small[LOGO_SMALL_ROWS][LOGO_SMALL_COLS] = {
+    { MK_BLUE,  MK_PAPER, MK_PAPER, MK_RED    },
+    { MK_PAPER, MK_PAPER, MK_PAPER, MK_PAPER  },
+    { MK_GREEN, MK_PAPER, MK_PAPER, MK_YELLOW }
+};
+
+static const unsigned char mark_large[LOGO_LARGE_ROWS][LOGO_LARGE_COLS] = {
+    { MK_BLUE,  MK_BLUE,  MK_BLUE,  MK_BLUE,  MK_RED,    MK_RED,    MK_RED,    MK_RED    },
+    { MK_BLUE,  MK_PAPER, MK_PAPER, MK_PAPER, MK_PAPER,  MK_PAPER,  MK_PAPER,  MK_RED    },
+    { MK_BLUE,  MK_PAPER, MK_PAPER, MK_PAPER, MK_PAPER,  MK_PAPER,  MK_PAPER,  MK_RED    },
+    { MK_GREEN, MK_PAPER, MK_PAPER, MK_PAPER, MK_PAPER,  MK_PAPER,  MK_PAPER,  MK_YELLOW },
+    { MK_GREEN, MK_PAPER, MK_PAPER, MK_PAPER, MK_PAPER,  MK_PAPER,  MK_PAPER,  MK_YELLOW },
+    { MK_GREEN, MK_GREEN, MK_GREEN, MK_GREEN, MK_YELLOW, MK_YELLOW, MK_YELLOW, MK_YELLOW }
+};
+
+static void mark_blit(const unsigned char *tab, unsigned char rows,
+                      unsigned char cols, unsigned char row, unsigned char col)
+{
+    unsigned char r, c;
+
+    for (r = 0; r < rows; r++)
+        for (c = 0; c < cols; c++)
+            scr_cell((unsigned char) (row + r), (unsigned char) (col + c),
+                     ' ', tab[r * cols + c]);
+}
+
+void logo_small(unsigned char row, unsigned char col)
+{
+    mark_blit((const unsigned char *) mark_small,
+              LOGO_SMALL_ROWS, LOGO_SMALL_COLS, row, col);
+}
+
+void logo_large(unsigned char row, unsigned char col)
+{
+    mark_blit((const unsigned char *) mark_large,
+              LOGO_LARGE_ROWS, LOGO_LARGE_COLS, row, col);
+
+    /* Centered in the page: interior columns are 1..6, interior rows 1..4. */
+    scr_field((unsigned char) (row + 2), (unsigned char) (col + 3), "31", 2,
+              A_TEXT);
+}
+
+#else
+
 static const unsigned char mark_small[LOGO_SMALL_ROWS][LOGO_SMALL_COLS] = {
     { 0xAF, 0xCF, 0xCF, 0xBF },
     { 0x8F, 0xCF, 0xCF, 0x9F }
@@ -84,3 +146,5 @@ void logo_large(unsigned char row, unsigned char col)
         memcpy(SCR_RAM + (unsigned int) (row + i) * SCR_COLS + col,
                mark_large[i], LOGO_LARGE_COLS);
 }
+
+#endif /* COCO3 */

@@ -264,7 +264,9 @@ extern unsigned char gc_wrap_cols;      /* set by the backend, <= DET_COLS */
 
 struct event {
     char          num[EVNUM_LEN];
+#ifndef COCO3
     char          title[TITLE_LEN];
+#endif
 #ifdef GC_KEEP_CAT
     char          cat[CAT_LEN];
 #endif
@@ -327,7 +329,74 @@ extern struct cal    gc_cals[CAL_MAX];
 #endif
 extern unsigned char gc_cal_count;
 
+#ifdef COCO3
+/*
+ * On the CoCo 3 the wrapped detail text lives in the second 64K, not here --
+ * see src/coco/far.c. It is written a few rows at a time as the description
+ * ingests and read one row at a time to draw, so it never needs to be
+ * addressable, and keeping it out of the 6809's 64K is what pays for the
+ * 80-column layout.
+ */
+#define FAR_DET     0
+#define FAR_TITLE   ((unsigned int) DET_ROWS * DET_STRIDE)
+
+void far_get(void *dst, unsigned int off, unsigned int len);
+void far_put(unsigned int off, const void *src, unsigned int len);
+
+#ifdef COCO3
+/*
+ * The compose form is a separate binary on this machine -- the main client had
+ * no room for it, and the second bank survives a LOADM, which makes a hand-off
+ * through RAM possible where it would not be on the 1/2.
+ *
+ * GCAL3 fills this in, chains to GCALED3, and reads it back when GCALED3
+ * chains home: the view, date, selection and scroll so the screen comes back
+ * where it was, and the record itself so the editor need not refetch just to
+ * populate its fields.
+ */
+#define GC_CHAIN_NEW    0
+#define GC_CHAIN_EDIT_M 1
+
+struct chainstate {
+    unsigned char magic0, magic1;   /* 'G','C' -- absent means a cold start */
+    unsigned char mode;             /* GC_CHAIN_NEW or GC_CHAIN_EDIT_M      */
+    unsigned char returning;        /* set by the editor on the way back    */
+    unsigned char changed;          /* editor saved something: refetch      */
+    unsigned char view, sel, first;
+    unsigned int  y;
+    unsigned char mo, d;
+    unsigned char ev;
+    struct event  rec;
+    char          title[TITLE_LEN];
+};
+
+#define FAR_STATE   (FAR_TITLE + (unsigned int) MAX_EVENTS * TITLE_LEN)
+
+void          chain_save(const struct chainstate *st);
+void          chain_load(struct chainstate *st);
+void          chain_clear(void);
+void          chain_run(const char *binary);
+
+#ifdef GC_CHAIN_EDIT
+/* Called from main() once plat_init() has run. Returns non-zero when we came
+   back from the editor, having restored the caller's view/sel/first. */
+unsigned char chain_resume(unsigned char *view, unsigned char *sel,
+                           unsigned char *first);
+#endif
+#endif /* COCO3 */
+
+
+/*
+ * Titles go far too. They are the largest slice of an event -- forty bytes of
+ * about sixty-five -- and every use is a whole string, so they cost one fetch
+ * rather than a field access. ev_title() returns a shared buffer, so only one
+ * title is live at a time; nothing here needs two.
+ */
+const char *ev_title(unsigned char ev);
+void        ev_set_title(unsigned char ev, const char *src);
+#else
 extern char          gc_det[DET_ROWS][DET_STRIDE];
+#endif
 extern unsigned int  gc_det_rows;
 extern unsigned char gc_det_trunc;
 
@@ -514,8 +583,27 @@ struct frmbuf {
  * form abandons any detail screen, and the refetch on the way back rebuilds
  * gc_det from scratch. form.c carries the compile-time size guard.
  */
+#ifdef COCO3
+/*
+ * The borrowed RAM the form, the picker and the detail staging rows take
+ * turns in. Sized to the largest of the three; src/coco/far.c defines it and
+ * src/form.c carries the guard that fails the build if one outgrows it.
+ */
+#define GC_STAGE_ROWS   6
+#define GC_STAGE_SIZE   (GC_STAGE_ROWS * DET_STRIDE)
+#define GC_CALS_BYTES   (CAL_MAX * (CAL_NAME_LEN + CAL_SEL_LEN))
+#define GC_SCRATCH_MAX2 (FRMBUF_SIZE > GC_CALS_BYTES ? FRMBUF_SIZE : GC_CALS_BYTES)
+#define GC_SCRATCH_SIZE (GC_SCRATCH_MAX2 > GC_STAGE_SIZE ? GC_SCRATCH_MAX2 \
+                                                         : GC_STAGE_SIZE)
+extern char gc_scratch[GC_SCRATCH_SIZE];
+#endif
+
 #ifdef GC_FORM_OVERLAY
+#ifdef COCO3
+#define frm (*(struct frmbuf *) gc_scratch)
+#else
 #define frm (*(struct frmbuf *) gc_det)
+#endif
 #else
 extern struct frmbuf frm;
 #endif
@@ -532,12 +620,22 @@ extern struct frmbuf frm;
  */
 #ifdef GC_CALS_OVERLAY
 #define GC_CALS_SIZE (CAL_MAX * (CAL_NAME_LEN + CAL_SEL_LEN))
+#ifdef COCO3
+/* The CoCo 3 has no gc_det to borrow -- the detail text is in the second bank
+   -- so the three short-lived buffers share gc_scratch instead. They are alive
+   at different times for exactly the reasons the two notes above give, plus
+   one more: the detail staging rows only exist while a description is being
+   ingested, which is not while the form or the picker is up. */
+#define GC_CALS_OFF 0
+#define gc_cals ((struct cal *) ((char *) gc_scratch + GC_CALS_OFF))
+#else
 #if FRMBUF_SIZE + GC_CALS_SIZE <= DET_ROWS * DET_STRIDE
 #define GC_CALS_OFF FRMBUF_SIZE
 #else
 #define GC_CALS_OFF 0
 #endif
 #define gc_cals ((struct cal *) ((char *) gc_det + GC_CALS_OFF))
+#endif
 #endif
 
 /* Which fields the user has touched. Compose emits every non-empty field;

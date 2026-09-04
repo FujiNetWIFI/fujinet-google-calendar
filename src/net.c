@@ -417,6 +417,13 @@ static void fake_stream(const char *const *lines,
 }
 #endif
 
+#ifndef GC_EDITOR
+/*
+ * The fetch half. GCALED3 sends a draft and nothing else, so none of this is
+ * built into it -- and because every object goes on the link line whether it
+ * is referenced or not, leaving it in would drag the index parser, the detail
+ * ingest and the agenda builder in behind it.
+ */
 unsigned char gc_fetch_index(unsigned char view)
 {
     idx_reset(view);
@@ -612,6 +619,8 @@ unsigned char gc_fetch_cals(void)
 /* ------------------------------------------------------------------ */
 /* The draft channel                                                   */
 /* ------------------------------------------------------------------ */
+
+#endif /* !GC_EDITOR */
 
 /*
  * A WRITE open stages nothing to read, so there is no settle() here; the
