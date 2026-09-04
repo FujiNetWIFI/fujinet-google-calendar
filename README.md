@@ -3,12 +3,17 @@
 A Google Calendar client for 8-bit machines, talking to the `GCAL:` network
 protocol adapter in [fujinet-firmware](https://github.com/FujiNetWIFI/fujinet-firmware).
 
-Two implementations live here:
+Three implementations live here:
 
 - `intv/` — the original, in IntyBASIC for the Intellivision.
 - `src/` — a C port. The portable core is in `src/`, the machine-specific half
   in `src/<platform>/`. Atari 8-bit, Apple II, CoCo, Coleco Adam and MS-DOS
   backends exist so far.
+- `astrocade/` — a standalone Z80 assembly (zmac) client for the Bally
+  Astrocade, whose 4 KB of RAM (all screen RAM) and single 8 KB cartridge
+  rule out the C core. See its own `README.md`; it fits a reduced feature set
+  (day/month/agenda, detail, compose/edit) into 6,912 bytes, with the rest
+  waiting on cartridge bank switching.
 
 Day, week, month and agenda views; an event detail screen; a calendar picker; a
 settings page; and alarms synthesised on the client, because the adapter's
