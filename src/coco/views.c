@@ -1,4 +1,12 @@
 /*
+ * The VDG build's painters. The CoCo 3 has its own -- views3.c and ui3.c --
+ * because that machine's screen is an attribute plane and its layout is the
+ * MS-DOS backend's, not this 32-column one widened. Only one of the two pairs
+ * compiles into any binary.
+ */
+#ifndef COCO3
+
+/*
  * The four calendar views, the event detail screen, and the alarm banner.
  *
  * Every list row paints columns 1 to 31 and leaves column 0 alone. That column
@@ -713,3 +721,5 @@ void ui_alarm(unsigned char phase)
 
     scr_field(FOOT_ROW, 0, sbuf, SCR_COLS, phase);
 }
+
+#endif /* !COCO3 */

@@ -300,7 +300,18 @@ static void take_event(const char *p, unsigned char len)
         tlen = TITLE_LEN - 1;
     memcpy(buf, p + titlec, tlen);
     buf[tlen] = '\0';
+#ifdef COCO3
+    /* The title lives in far storage on this build -- sanitize into a local
+       and hand the whole field over in one write. */
+    {
+        static char t[TITLE_LEN];
+
+        copy_san(t, buf, TITLE_LEN);
+        ev_set_title(gc_count, t);
+    }
+#else
     copy_san(e->title, buf, TITLE_LEN);
+#endif
 
     gc_count++;
 }

@@ -243,7 +243,9 @@ extern unsigned char gc_wrap_cols;      /* set by the backend, <= DET_COLS */
 
 struct event {
     char          num[EVNUM_LEN];
+#ifndef COCO3
     char          title[TITLE_LEN];
+#endif
 #ifdef GC_KEEP_CAT
     char          cat[CAT_LEN];
 #endif
@@ -301,7 +303,31 @@ extern unsigned char gc_daycol[32];
 extern struct cal    gc_cals[CAL_MAX];
 extern unsigned char gc_cal_count;
 
+#ifdef COCO3
+/*
+ * On the CoCo 3 the wrapped detail text lives in the second 64K, not here --
+ * see src/coco/far.c. It is written a few rows at a time as the description
+ * ingests and read one row at a time to draw, so it never needs to be
+ * addressable, and keeping it out of the 6809's 64K is what pays for the
+ * 80-column layout.
+ */
+#define FAR_DET     0
+#define FAR_TITLE   ((unsigned int) DET_ROWS * DET_STRIDE)
+
+void far_get(void *dst, unsigned int off, unsigned int len);
+void far_put(unsigned int off, const void *src, unsigned int len);
+
+/*
+ * Titles go far too. They are the largest slice of an event -- forty bytes of
+ * about sixty-five -- and every use is a whole string, so they cost one fetch
+ * rather than a field access. ev_title() returns a shared buffer, so only one
+ * title is live at a time; nothing here needs two.
+ */
+const char *ev_title(unsigned char ev);
+void        ev_set_title(unsigned char ev, const char *src);
+#else
 extern char          gc_det[DET_ROWS][DET_STRIDE];
+#endif
 extern unsigned int  gc_det_rows;
 extern unsigned char gc_det_trunc;
 
