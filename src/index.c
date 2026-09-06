@@ -1,4 +1,12 @@
 /*
+ * Not built into GCALED3, the CoCo 3's compose form: that program draws no
+ * calendar and fetches no listing. Every object on the link line is included
+ * whether it is referenced or not, so the only way to keep it out is for the
+ * file to compile to nothing. GC_EDITOR is defined by that build alone.
+ */
+#ifndef GC_EDITOR
+
+/*
  * The event listing parser.
  *
  * A DIR open on a calendar view returns a window title line, a header line,
@@ -300,7 +308,18 @@ static void take_event(const char *p, unsigned char len)
         tlen = TITLE_LEN - 1;
     memcpy(buf, p + titlec, tlen);
     buf[tlen] = '\0';
+#ifdef COCO3
+    /* The title lives in far storage on this build -- sanitize into a local
+       and hand the whole field over in one write. */
+    {
+        static char t[TITLE_LEN];
+
+        copy_san(t, buf, TITLE_LEN);
+        ev_set_title(gc_count, t);
+    }
+#else
     copy_san(e->title, buf, TITLE_LEN);
+#endif
 
     gc_count++;
 }
@@ -338,3 +357,5 @@ void idx_line(const char *p, unsigned char len)
     else
         take_event(p, len);
 }
+
+#endif /* !GC_EDITOR */

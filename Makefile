@@ -165,9 +165,11 @@ CFLAGS_EXTRA_APPLE2ENH += -DFRM_LOC_MAX=50 -DFRM_DESC_MAX=160
 LDFLAGS_EXTRA_APPLE2ENH  = -Wl -D,__HIMEM__=0xBF00
 LDFLAGS_EXTRA_APPLE2ENH += --mapfile r2r/apple2enh/gcal.map
 
-# The CoCo runs at 32x16 on the VDG's semigraphics page, which is the
-# narrowest and shortest screen this client has ever had -- and the only one
-# besides the Atari's that can show an event's real Google colour.
+# The CoCo 1/2 runs at 32x16 on the VDG's semigraphics page, which is the
+# narrowest and shortest screen this client has -- and one of the few that can
+# show an event's real Google color. The CoCo 3 build is a second binary from
+# the same source at 80x24 on the GIME, where the color is an attribute rather
+# than a semigraphics cell; its knobs are in the MAKE_COCO3 branch below.
 #
 # LIST_ROWS 11 is rows 2-12; rows 13-14 are the panel that spells the selection
 # out, which earns its keep harder here than on the Atari because the list's
@@ -184,6 +186,43 @@ LDFLAGS_EXTRA_APPLE2ENH += --mapfile r2r/apple2enh/gcal.map
 # 40 showed 39 ("09:00-10:00  " takes 13 of the panel's 64). GC_RXBUF 128
 # only costs round trips -- every reader drains through split_lines(),
 # which is indifferent to chunk boundaries.
+#
+# The CoCo 3 is a second binary rather than a runtime branch inside this one.
+# The two machines never share a screen -- a 1/2 is always the VDG's 32x16 and a
+# 3 is always the GIME's 80x24 -- so a combined image would carry two backends,
+# two marks and two layouts through a ceiling the 1/2 has no room in.
+#
+# The 80-column layout is the MS-DOS backend's, not this one widened:
+# src/coco/views3.c and ui3.c are that backend's painters, which name attribute
+# roles rather than an inverse flag. The knobs below are its 80-column arm.
+#
+# They do not come down the way the 1/2's did for the compose form, because the
+# objects that scale with the width are not in the 6809's 64K at all: the
+# wrapped detail text and the event titles live in the second bank, see
+# src/coco/far.c. The overlays below are still set, but they borrow gc_scratch
+# rather than the gc_det this build does not have -- see the note in src/gcal.h.
+#
+ifeq ($(MAKE_COCO3),COCO3)
+
+CFLAGS_EXTRA_COCO  = -DCOCO3
+CFLAGS_EXTRA_COCO += -DLIST_ROWS=18 -DPICK_ROWS=14 -DDET_WIN=20
+CFLAGS_EXTRA_COCO += -DDET_COLS=78 -DDET_ROWS=32
+CFLAGS_EXTRA_COCO += -DMAX_EVENTS=24 -DTITLE_LEN=40
+CFLAGS_EXTRA_COCO += -DGC_RXBUF=96 -DLINE_CAP=96
+CFLAGS_EXTRA_COCO += -DGC_FORM_OVERLAY -DGC_CALS_OVERLAY
+
+# The compose form is GCALED3.BIN, a second program -- see src/coco/chain.c.
+# GC_CHAIN_EDIT builds the client that hands over to it; MAKE_EDITOR builds the
+# editor from the same tree, which is why the two defines are exclusive: the
+# editor wants the real form and its own main(), the client wants neither.
+ifeq ($(MAKE_EDITOR),1)
+CFLAGS_EXTRA_COCO += -DGC_EDITOR
+else
+CFLAGS_EXTRA_COCO += -DGC_CHAIN_EDIT
+endif
+
+else
+
 CFLAGS_EXTRA_COCO  = -DLIST_ROWS=11 -DPICK_ROWS=10 -DDET_WIN=12
 CFLAGS_EXTRA_COCO += -DDET_COLS=32 -DDET_ROWS=22
 CFLAGS_EXTRA_COCO += -DMAX_EVENTS=24 -DTITLE_LEN=36
@@ -195,6 +234,8 @@ CFLAGS_EXTRA_COCO += -DGC_RXBUF=96
 # LINE_CAP comes down to what a width-80 line can actually need. Keep in
 # step with CFLAGS32 in tests/Makefile.
 CFLAGS_EXTRA_COCO += -DGC_FORM_OVERLAY -DGC_CALS_OVERLAY -DLINE_CAP=96
+
+endif
 
 # fujinet-lib declares clock_get_tz for every platform but only builds it for
 # some: the CoCo archive carries fn_clock/clock_get_time.o and nothing else, so
@@ -246,25 +287,25 @@ CFLAGS_EXTRA_COCO += $(COCO_SHOT_FLAGS)
 LDFLAGS_EXTRA_COCO  = --org=0E80 --limit=7F00 --initial-s=0D00
 LDFLAGS_EXTRA_COCO += --no-relocate -i
 
-# The disk carries GCAL.BIN and nothing else. It is started with
+# `make coco` puts GCAL.BIN on a disk by itself, started by hand with
 #
 #   LOADM"GCAL":EXEC
 #
-# and there is deliberately no AUTOEXEC.BAS to do that for you, because neither
-# way of putting one on the disk survives contact:
+# `make coco-dist` builds the combined CoCo 1/2 + CoCo 3 disk instead, which
+# carries an AUTOEXEC.BAS, a loader as GCAL.BIN, and the two clients as
+# GCAL1.BIN and GCAL3.BIN. See the recipe at the foot of this file.
 #
-#   - decb's -t runs its own BASIC tokeniser, and it does not know LOADM. It
-#     matches LOAD greedily and leaves the M as text, so the line comes back as
-#     LOAD M"GCAL" and RUN answers ?SN ERROR.
-#   - Stored as ASCII with -a -l, BASIC tokenises it correctly on the way in --
-#     and then ?SN ERRORs anyway, because Disk BASIC runs an ASCII program out
-#     of the disk buffer that LOADM itself needs. Disk I/O from an ASCII-loaded
-#     program does not work.
+# That AUTOEXEC is RUNM"GCAL" -- an HDB-DOS command -- and it has to be RUNM
+# rather than LOADM. decb's -t tokenizer does not know LOADM: it matches LOAD
+# greedily and leaves the M as text, so the line comes back as LOAD M"GCAL" and
+# RUN answers ?SN ERROR. Storing it as ASCII with -a -l does not help either --
+# BASIC tokenizes that correctly on the way in and then ?SN ERRORs anyway,
+# because Disk BASIC runs an ASCII program out of the disk buffer that LOADM
+# itself needs. Disk I/O from an ASCII-loaded program does not work.
 #
-# fujinet-news and fujinet-config get around this with a second-stage loader
-# that pokes BASIC's direct-mode buffer and jumps into RUNM. That trick is ROM
-# sensitive -- it gives ?UL ERROR on stock Disk BASIC 1.1 -- and one typed line
-# is a smaller price than a second binary that only works on some ROMs.
+# The loader itself is the second stage fujinet-news and fujinet-config use --
+# poke BASIC's direct-mode buffer and jump into RUNM -- which is what lets one
+# disk carry both models. support/coco/loader.c is it.
 
 # The MS-DOS build (Open Watcom wcc, 8086, small model) is the one target
 # that does not know its own width until it is running: a PC inherits
@@ -350,6 +391,58 @@ include mekkogx/toplevel-rules.mk
 #   coco/r2r:: coco/custom-step2
 # or
 #   apple2enh/disk: apple2enh/custom-step1 apple2enh/custom-step2
+
+#################################################################
+## COCO 1/2 + COCO 3 COMBINED DISK                             ##
+#################################################################
+
+COCO_R2R  = r2r/coco/$(PRODUCT)
+COCO_DISK = $(COCO_R2R).dsk
+
+# The CoCo 3 variant, through the same rules as the 1/2.
+coco3:
+	$(MAKE) coco MAKE_COCO3=COCO3
+
+# The CoCo 3's compose form, built from the same tree with its own main().
+coco-edit:
+	$(MAKE) coco MAKE_COCO3=COCO3 MAKE_EDITOR=1
+
+#
+# One disk that runs on either machine: GCAL1.BIN for the VDG, GCAL3.BIN for
+# the GIME, and GCAL.BIN a loader that reads the model and RUNMs the right one
+# -- fujinet-fujirkle's pattern, and support/coco/loader.c is its loader.
+# AUTOEXEC.BAS starts the loader, so the disk boots straight into the client.
+#
+# The object tree has to go between the two builds: make keys off timestamps
+# rather than flags, so without this the second variant would silently relink
+# the first one's objects.
+#
+coco-dist:
+	$(MAKE) clean
+	rm -rf build
+	$(MAKE) coco
+	mv $(COCO_R2R).bin $(COCO_R2R)1.bin
+
+	rm -rf build
+	$(MAKE) coco3
+	mv $(COCO_R2R).bin $(COCO_R2R)3.bin
+
+	rm -rf build
+	$(MAKE) coco-edit
+	mv $(COCO_R2R).bin $(COCO_R2R)e3.bin
+
+	cmoc -o $(COCO_R2R).bin support/coco/loader.c
+
+	$(RM) $(COCO_DISK)
+	decb dskini $(COCO_DISK)
+	mkdir -p build/coco
+	echo RUNM\"GCAL\" > build/coco/autoexec.bas
+	decb copy -t -0 build/coco/autoexec.bas $(COCO_DISK),AUTOEXEC.BAS
+	decb copy -b -2 $(COCO_R2R).bin  $(COCO_DISK),GCAL.BIN
+	decb copy -b -2 $(COCO_R2R)1.bin $(COCO_DISK),GCAL1.BIN
+	decb copy -b -2 $(COCO_R2R)3.bin $(COCO_DISK),GCAL3.BIN
+	decb copy -b -2 $(COCO_R2R)e3.bin $(COCO_DISK),GCALED3.BIN
+	decb dir $(COCO_DISK)
 
 # The MS-DOS disk is a bootless 360K FAT image (mformat lays no system
 # tracks -- SYS A: it from a DOS disk) carrying GCAL.EXE and the FujiNet

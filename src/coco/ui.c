@@ -1,4 +1,12 @@
 /*
+ * The VDG build's painters. The CoCo 3 has its own -- views3.c and ui3.c --
+ * because that machine's screen is an attribute plane and its layout is the
+ * MS-DOS backend's, not this 32-column one widened. Only one of the two pairs
+ * compiles into any binary.
+ */
+#ifndef COCO3
+
+/*
  * Screen chrome, the flat screens, and the two settings screens.
  *
  * Sixteen rows is four fewer than the Intellivision had columns to spare, and
@@ -463,3 +471,5 @@ void ui_form_msg(unsigned char msg)
 
     scr_center(FRM_MSG_ROW, s, 1);
 }
+
+#endif /* !COCO3 */

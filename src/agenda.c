@@ -1,4 +1,12 @@
 /*
+ * Not built into GCALED3, the CoCo 3's compose form: that program draws no
+ * calendar and fetches no listing. Every object on the link line is included
+ * whether it is referenced or not, so the only way to keep it out is for the
+ * file to compile to nothing. GC_EDITOR is defined by that build alone.
+ */
+#ifndef GC_EDITOR
+
+/*
  * The agenda display list.
  *
  * The agenda view interleaves date separators with events, so a display row
@@ -41,3 +49,5 @@ void agenda_build(void)
         gc_agd[gc_agd_count++] = i;
     }
 }
+
+#endif /* !GC_EDITOR */

@@ -169,7 +169,25 @@ unsigned char plat_getch(void)
         case KEY_LEFT:  return E_BS;
         }
 
-        if (c >= 0x20 && c < 0x7F)
+        if (c >= 0x20 && c < 0x7F) {
+#ifdef COCO3
+            /*
+             * inkey() hands back the ROM's uppercase-only set, which is all
+             * the VDG page can echo -- but the GIME's character generator has
+             * lowercase, and a calendar full of SHOUTED event titles is not
+             * what anyone wants on the wire.
+             *
+             * So invert the machine's convention the way fujinet-config's
+             * src/coco/input.c does: a letter arrives lowercase unless SHIFT
+             * is actually down. isKeyPressed() reads the physical row, which
+             * is the only way to know -- the ROM has already folded the case
+             * out of the character by the time we see it.
+             */
+            if (c >= 'A' && c <= 'Z' &&
+                !isKeyPressed(KEY_PROBE_SHIFT, KEY_BIT_SHIFT))
+                c = (unsigned char) (c + 0x20);
+#endif
             return c;
+        }
     }
 }

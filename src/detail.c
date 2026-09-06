@@ -1,4 +1,12 @@
 /*
+ * Not built into GCALED3, the CoCo 3's compose form: that program draws no
+ * calendar and fetches no listing. Every object on the link line is included
+ * whether it is referenced or not, so the only way to keep it out is for the
+ * file to compile to nothing. GC_EDITOR is defined by that build alone.
+ */
+#ifndef GC_EDITOR
+
+/*
  * Event detail ingest.
  *
  * The raw reply is never stored. Each line coming off the wire is accumulated,
@@ -25,7 +33,17 @@
 
 #include "gcal.h"
 
+#ifdef COCO3
+/*
+ * The rows go to far storage as they are produced. One wrap_text() call turns
+ * one accumulated line into a handful of rows -- DET_LINE_CAP bounds it -- so
+ * a small stage is enough, and passing its size as max_rows means the wrapper
+ * can never write past it.
+ */
+#define STAGE_ROWS  GC_STAGE_ROWS
+#else
 char          gc_det[DET_ROWS][DET_STRIDE];
+#endif
 unsigned int  gc_det_rows;
 unsigned char gc_det_trunc;
 
@@ -106,8 +124,21 @@ static void flush_line(void)
     }
 
     avail = DET_ROWS - gc_det_rows;
+#ifdef COCO3
+    {
+        unsigned int n;
+
+        if (avail > STAGE_ROWS)
+            avail = STAGE_ROWS;
+        n = wrap_text(linebuf, gc_scratch, avail, GC_WRAP_COLS, DET_STRIDE);
+        far_put((unsigned int) (FAR_DET + gc_det_rows * DET_STRIDE),
+                gc_scratch, (unsigned int) (n * DET_STRIDE));
+        gc_det_rows += n;
+    }
+#else
     gc_det_rows += wrap_text(linebuf, gc_det[gc_det_rows],
                              avail, GC_WRAP_COLS, DET_STRIDE);
+#endif
 
     if (gc_det_rows >= DET_ROWS)
         gc_det_trunc = 1;
@@ -291,3 +322,5 @@ void detail_finish(void)
     if (line_len)
         flush_line();
 }
+
+#endif /* !GC_EDITOR */

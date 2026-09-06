@@ -1,4 +1,12 @@
 /*
+ * Not built into GCALED3, the CoCo 3's compose form: that program draws no
+ * calendar and fetches no listing. Every object on the link line is included
+ * whether it is referenced or not, so the only way to keep it out is for the
+ * file to compile to nothing. GC_EDITOR is defined by that build alone.
+ */
+#ifndef GC_EDITOR
+
+/*
  * Alarms.
  *
  * Entirely synthesised on this side. GCAL.cpp's field mask asks Google for
@@ -127,3 +135,5 @@ void alarm_dismiss(void)
 
     frames = 1;                 /* let alarm_step run its own teardown */
 }
+
+#endif /* !GC_EDITOR */

@@ -455,11 +455,20 @@ static void switch_view(unsigned char v)
     dirty = 1;
 }
 
+#ifndef GC_EDITOR
 int main(void)
 {
     unsigned char k;
 
     plat_init();
+
+#ifdef GC_CHAIN_EDIT
+    /* Back from the editor: put the view, date and selection where they were
+       before it took over. A save there means the listing is stale. */
+    if (chain_resume(&view, &sel, &first))
+        dirty = 1;
+#endif
+
     ui_splash();
 
     while (!have_fujinet()) {
@@ -637,3 +646,4 @@ int main(void)
         }
     }
 }
+#endif /* !GC_EDITOR */

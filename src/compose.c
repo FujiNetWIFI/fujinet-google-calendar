@@ -1,4 +1,11 @@
 /*
+ * Not built into the CoCo 3 client: there it is a separate binary and
+ * src/coco/chain.c is the seam. Every other platform, the CoCo 1/2
+ * included, compiles this in-process as usual.
+ */
+#ifndef GC_CHAIN_EDIT
+
+/*
  * The compose/edit screen: one blocking loop, in the house style -- no state
  * table, control flow is the call stack. form.c owns the data and the wire
  * format; the backends own the paint; this file owns the cursor.
@@ -273,3 +280,5 @@ unsigned char compose_edit(unsigned char view, unsigned char ev)
     form_init(e, y, mo, d);
     return runform(1, view, e->num);
 }
+
+#endif /* !GC_CHAIN_EDIT */
