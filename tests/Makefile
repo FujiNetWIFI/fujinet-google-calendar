@@ -4,12 +4,13 @@
 # natively. The rest of src/ needs cc65 and a FujiNet, and is exercised through
 # the emulator instead -- see tools/atari-shot.sh and tools/apple2-shot.sh.
 #
-# Five binaries, because the core's fixed-width constants are overridable and
+# Six binaries, because the core's fixed-width constants are overridable and
 # every backend overrides them differently. hosttest is the Atari's shape,
 # hosttest80 the Apple II's -- which is the only way the reflow path gets
 # covered at all, since it compiles out entirely without DET_REFLOW --
 # hosttest32 the CoCo's, hosttestadam the Adam's, and hosttestdos the
-# MS-DOS one, the only shape where the wrap width is a runtime variable.
+# MS-DOS one, the only shape where the wrap width is a runtime variable, and
+# hosttestnes the NES's.
 
 CC      ?= cc
 CFLAGS  ?= -O1 -g -Wall -Wextra -Wno-unused-parameter
@@ -51,6 +52,12 @@ CFLAGSDOS = -DGC_RT_COLS -DTITLE_LEN=50 -DDET_COLS=78 -DDET_ROWS=48 \
             -DDET_LINE_CAP=512 -DDET_REFLOW -DGC_KEEP_CAT \
             -DFRM_LOC_MAX=50 -DFRM_DESC_MAX=160
 
+# Keep in step with CFLAGS_EXTRA_NES. The first shape that wraps at 28
+# columns, and the one whose detail buffer is sized by something other than
+# reading: 45 rows so the START menu's screen save (1280 bytes) fits in it.
+CFLAGSNES = -DMAX_EVENTS=48 -DTITLE_LEN=40 -DDET_COLS=28 -DDET_ROWS=45 \
+            -DGC_FORM_OVERLAY -DGC_CALS_OVERLAY -DDET_REFLOW -DDET_LINE_CAP=256
+
 SRC = hosttest.c \
       ../src/wrap.c \
       ../src/sanitize.c \
@@ -64,12 +71,13 @@ SRC = hosttest.c \
       ../src/form.c \
       ../src/model.c
 
-all: hosttest hosttest80 hosttest32 hosttestadam hosttestdos
+all: hosttest hosttest80 hosttest32 hosttestadam hosttestdos hosttestnes
 	./hosttest
 	./hosttest80
 	./hosttest32
 	./hosttestadam
 	./hosttestdos
+	./hosttestnes
 
 hosttest: $(SRC) ../src/gcal.h
 	$(CC) $(CFLAGS) $(CFLAGSATARI) -o $@ $(SRC)
@@ -86,7 +94,10 @@ hosttestadam: $(SRC) ../src/gcal.h
 hosttestdos: $(SRC) ../src/gcal.h
 	$(CC) $(CFLAGS) $(CFLAGSDOS) -o $@ $(SRC)
 
+hosttestnes: $(SRC) ../src/gcal.h
+	$(CC) $(CFLAGS) $(CFLAGSNES) -o $@ $(SRC)
+
 clean:
-	rm -f hosttest hosttest80 hosttest32 hosttestadam hosttestdos
+	rm -f hosttest hosttest80 hosttest32 hosttestadam hosttestdos hosttestnes
 
 .PHONY: all clean

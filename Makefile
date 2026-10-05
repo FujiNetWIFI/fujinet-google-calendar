@@ -4,6 +4,7 @@ PLATFORMS += apple2enh
 PLATFORMS += atari
 PLATFORMS += coco
 PLATFORMS += msdos
+PLATFORMS += nes
 
 # This list is the backends that exist in src/, not the platforms mekkogx can
 # target. SRC_DIRS globs src/%PLATFORM% with $(wildcard), so a platform with no
@@ -365,6 +366,109 @@ LDFLAGS_EXTRA_MSDOS += OPTION stack=4096
 # else, so an absolute host path is invisible inside it, and the empty
 # variable makes fnlib.py download the msdos release archive into the
 # project's own _cache/ instead.
+
+# ---- NES -------------------------------------------------------------------
+# An MMC3 cartridge image (.nes) for the FujiNet NES cartridge, which the NES
+# CONFIG boots: 128K PRG, 16K CHR-RAM, 8K WRAM (src/nes/gcal-nes.cfg). The
+# screen is 32x30 tiles of text, Google's eleven event colours are sprites,
+# and the program is bigger than the 24K the NES can see without switching:
+# the fixed 16K and R7's 8K hold everything every screen calls, and each
+# screen family and the network take turns in the 8K window at $8000. See
+# src/nes/tramp.c for how the core gets there untouched, and the README's
+# NES section for how to build and run it.
+#
+# The shape: 30 usable columns, LIST_ROWS 14 under a two-row header, the tabs
+# and a rule, with the two-row panel below. DET_COLS 28 is the body between
+# the colour bar and the scroll bar. MAX_EVENTS 48 and the two overlays are the
+# Atari's RAM trades -- the whole of the program's data lives in the cart's
+# 8K of WRAM -- and DET_ROWS 45 is not a reading length but the START menu's
+# save area: the screen it puts back afterwards (scr_save, 1280 bytes) lives
+# in the detail buffer, which nothing on a view screen is using. Check
+# r2r/nes/gcal.map's BSS against $8000 after raising anything here
+# (tools/nes/budget.py does, on every link). Keep in step with CFLAGSNES in
+# tests/Makefile.
+CFLAGS_EXTRA_NES  = -Os
+CFLAGS_EXTRA_NES += -DLIST_ROWS=14 -DPICK_ROWS=14 -DDET_WIN=14
+CFLAGS_EXTRA_NES += -DDET_COLS=28 -DDET_ROWS=45 -DTITLE_LEN=40
+CFLAGS_EXTRA_NES += -DMAX_EVENTS=48 -DGC_RXBUF=512
+CFLAGS_EXTRA_NES += -DGC_FORM_OVERLAY -DGC_CALS_OVERLAY
+
+# The adapter wraps a description at 38 columns and this screen's body is 28,
+# so without reflow every second line of prose is a stub. DET_LINE_CAP is the
+# paragraph accumulator; 256 rejoins most paragraphs whole, and one longer
+# than that only ends a row early.
+CFLAGS_EXTRA_NES += -DDET_REFLOW -DDET_LINE_CAP=256
+
+# tools/nes-shot.sh appends -DGC_FAKE_DATA / -DGC_FAKE_KEYS through here.
+CFLAGS_EXTRA_NES += $(NES_SHOT_FLAGS)
+
+# fujinet-lib for the NES is fujinet-lib-experimental's add-nes branch, which
+# fnlib.py cannot fetch: there is no release archive of it. `make nes-fnlib`
+# copies a checkout (FNLIB_EXP, by default the one beside this repo) into
+# _cache/, where the defoogi container can see it, and the library itself is
+# built from that copy by the same cc65 that links the program.
+FNLIB_EXP ?= $(HOME)/Workspace/fujinet-lib-experimental
+FNLIB_NES_SRC = $(CACHE_DIR)/fujinet-lib-experimental
+FNLIB_NES = build/fnlib-nes
+
+ifeq ($(PLATFORM),nes)
+  FUJINET_LIB := __UNDEFINED__
+  LIBS += $(FNLIB_NES)/fujinet-nes.lib
+endif
+EXTRA_INCLUDE_NES += $(FNLIB_NES)/include
+LDFLAGS_EXTRA_NES += -C src/nes/gcal-nes.cfg -m r2r/nes/gcal.map
+EXECUTABLE_EXTRA_DEPS_NES += src/nes/gcal-nes.cfg $(FNLIB_NES)/fujinet-nes.lib
+
+# Every object includes the library's headers, so the library comes first.
+ifeq ($(PLATFORM),nes)
+$(patsubst %.c,build/$(PRODUCT)/nes/%.o,$(wildcard src/*.c src/nes/*.c)): | $(FNLIB_NES)/fujinet-nes.lib
+endif
+
+$(FNLIB_NES)/fujinet-nes.lib:
+	@[ -d $(FNLIB_NES_SRC)/bus/nes ] || { echo "No $(FNLIB_NES_SRC): run 'make nes-fnlib' on the host first" >&2; exit 1; }
+	sh tools/nes/mkfnlib.sh $(FNLIB_NES_SRC) $(FNLIB_NES)
+
+.PHONY: nes-fnlib
+nes-fnlib:
+	rm -rf $(FNLIB_NES_SRC) $(FNLIB_NES)
+	mkdir -p $(FNLIB_NES_SRC)
+	cp -r $(FNLIB_EXP)/include $(FNLIB_EXP)/common $(FNLIB_EXP)/bus $(FNLIB_NES_SRC)/
+	(cd $(FNLIB_EXP) && git rev-parse --short HEAD && git status --porcelain bus/nes common include) > $(FNLIB_NES_SRC)/VERSION
+
+# Where each object lives (gcal-nes.cfg). The core files in an overlay are
+# compiled with their entry points renamed, and src/nes/tramp.c defines the
+# real names as the doors into the bank -- so not one line of the portable
+# core knows it is banked. Everything not named here is CODE/RODATA in the
+# fixed bank.
+NSOBJ = build/$(PRODUCT)/nes/src
+NES_NET_RENAMES = -Dgc_fetch_index=bk_gc_fetch_index -Dgc_fetch_detail=bk_gc_fetch_detail \
+                  -Dgc_fetch_cals=bk_gc_fetch_cals -Dgc_save_begin=bk_gc_save_begin \
+                  -Dgc_save_end=bk_gc_save_end -Dform_put=bk_form_put
+NES_FORM_RENAMES = -Dcompose_new=bk_compose_new -Dcompose_edit=bk_compose_edit
+
+$(NSOBJ)/net.o:                       CFLAGS += --code-name OVL_NET --rodata-name OVL_NET $(NES_NET_RENAMES)
+$(NSOBJ)/index.o $(NSOBJ)/detail.o \
+  $(NSOBJ)/lines.o $(NSOBJ)/agenda.o: CFLAGS += --code-name OVL_NET --rodata-name OVL_NET
+$(NSOBJ)/nes/views.o:                 CFLAGS += --code-name OVL_VIEWS --rodata-name OVL_VIEWS
+$(NSOBJ)/nes/grid.o:                  CFLAGS += --code-name OVL_GRID --rodata-name OVL_GRID
+$(NSOBJ)/nes/detail_ui.o:             CFLAGS += --code-name OVL_DETAIL --rodata-name OVL_DETAIL
+$(NSOBJ)/compose.o:                   CFLAGS += --code-name OVL_FORM --rodata-name OVL_FORM $(NES_FORM_RENAMES)
+$(NSOBJ)/form.o $(NSOBJ)/nes/form_ui.o: CFLAGS += --code-name OVL_FORM --rodata-name OVL_FORM
+$(NSOBJ)/nes/pickers.o:               CFLAGS += --code-name OVL_PICK --rodata-name OVL_PICK
+$(NSOBJ)/nes/screens.o:               CFLAGS += --code-name OVL_BOOT --rodata-name OVL_BOOT
+# R7's bank: the rest of the core, and this backend's settings. (The chrome
+# every screen paints with is in the fixed bank with the screen layer: R7 has
+# no room for it.)
+$(NSOBJ)/main.o $(NSOBJ)/date.o $(NSOBJ)/wrap.o $(NSOBJ)/color.o \
+  $(NSOBJ)/clock.o $(NSOBJ)/alarm.o $(NSOBJ)/settings.o \
+  $(NSOBJ)/sanitize.o $(NSOBJ)/nes/prefs.o: CFLAGS += --code-name CODE2 --rodata-name CODE2
+
+# The claim, the vectors, no read-modify-write of the mailbox, no call across
+# banks that does not go through a trampoline, and the RAM and bank budgets.
+nes/executable-post::
+	python3 tools/nes/checkrom.py r2r/nes/gcal.map $(EXECUTABLE)
+	python3 tools/nes/xbank.py r2r/nes/gcal.map build/$(PRODUCT)/nes
+	python3 tools/nes/budget.py r2r/nes/gcal.map
 
 # HIRESTXT_LIB can be
 # - a version number such as 0.5.0.2

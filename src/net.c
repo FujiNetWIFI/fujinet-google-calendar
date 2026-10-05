@@ -145,12 +145,13 @@ static unsigned char st_ok(unsigned char code)
  * Anything other than 144 -- 138 timeout, 139 NAK, 143 checksum -- means the
  * device never gave us a usable reply at all, which is the timeout case.
  *
- * The INT F5 bus is different: its layer never writes fn_network_error at
- * all, so the Atari reading above would report every failed open as a
- * timeout -- including the 212 "authorize Google in the Web UI" a first-time
- * user is guaranteed to hit. The fix is to ask, once. The channel is still
- * addressable because network_open set the unit before issuing the control
- * command, and network_status needs nothing else. (The apple2enh build
+ * The INT F5 bus is different, and so is the NES cartridge's mailbox: neither
+ * layer writes fn_network_error at all, so the Atari reading above would
+ * report every failed open as a timeout -- including the 212 "authorize
+ * Google in the Web UI" a first-time user is guaranteed to hit. The fix is to
+ * ask, once. The channel is still addressable because network_open set the
+ * unit before issuing the control command, and network_status needs nothing
+ * else. (The apple2enh build
  * likely shares this gap -- widening the gate needs an Apple regression
  * capture, so it keeps the Atari branch for now.)
  */
@@ -160,7 +161,7 @@ static unsigned char open_error(void)
        the failure path issues another SIO command and overwrites it. */
     gc_dev_ecode = fn_device_error;
 
-#if defined(__MSDOS__)
+#if defined(__MSDOS__) || defined(__NES__)
     {
         unsigned char dev  = gc_dev_ecode;
         unsigned char code = probe();
