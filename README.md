@@ -7,8 +7,8 @@ Three implementations live here:
 
 - `intv/` — the original, in IntyBASIC for the Intellivision.
 - `src/` — a C port. The portable core is in `src/`, the machine-specific half
-  in `src/<platform>/`. Atari 8-bit, Apple II, CoCo, Coleco Adam and MS-DOS
-  backends exist so far.
+  in `src/<platform>/`. Atari 8-bit, Apple II, CoCo, Coleco Adam, MS-DOS,
+  NES and Heathkit H89 backends exist so far.
 - `astrocade/` — a standalone Z80 assembly (zmac) client for the Bally
   Astrocade, whose 4 KB of RAM (all screen RAM) and single 8 KB cartridge
   rule out the C core. See its own `README.md`; it fits a reduced feature set
@@ -27,6 +27,10 @@ defoogi make apple2enh      # -> r2r/apple2enh/gcal.a2s and gcal.po
 defoogi make coco           # -> r2r/coco/gcal.bin and gcal.dsk
 defoogi make adam           # -> r2r/adam/gcal.ddp and gcal_BOOTSTRAP.bin
 defoogi make msdos          # -> r2r/msdos/gcal.exe and gcal.img
+make nes-fnlib              # (once, on the host) the NES fujinet-lib, see below
+defoogi make nes            # -> r2r/nes/gcal.nes, an MMC3 cartridge image
+make h89-fnlib              # (once, on the host) the H89 fujinet-lib, see below
+defoogi make h89-cpm        # -> r2r/h89-cpm/gcal.com and gcal.h8d (CP/M)
 make -C tests               # host-native tests of the portable core
 ```
 
@@ -57,6 +61,11 @@ FujiNet can serve it, mount it in disk slot 1 from CONFIG, and boot — what is 
 slot 1 is what the ADAM boots. `gcal_BOOTSTRAP.bin` is the 43-byte boot block,
 already the first 1K of the `.ddp`; it is written out separately by z88dk's
 appmake and nothing needs to be done with it.
+
+The H89 target is CP/M (`h89-cpm`): `gcal.h8d` is a 100K H17 data disk in
+Heath CP/M's format holding `GCAL.COM`. Boot CP/M, put the disk in a second
+drive, and `B:GCAL` -- or mount it on the FujiNet and run it through FNDISK.
+It needs a 62K CP/M or larger, which is also what FNDISK needs.
 
 `adam_cpm` is deliberately not in `PLATFORMS`. `PLATFORM_COMBOS` expands it to
 `src/adam/` as well, so listing it would compile this backend's EOS and
@@ -99,6 +108,13 @@ and the list screens have two banks because they have more than six actions:
 `More` and `Back` on the list screens are the bank toggle and never reach the
 program's key handling at all. The keyboard keys keep working everywhere: the
 SmartKeys are the discoverable subset, not the whole of it.
+
+The H89 has its own keys for all of it, and the 25th line names them on every
+screen, keycaps in reverse: `f1`-`f4` are the four views and `f5` (or `HOME`)
+is today; the three colour keys are the three things done to events -- `BLUE`
+new, `RED` edit, `GRAY` fetch again; and the keypad, which the program puts in
+shifted mode, is the arrows, with its `9` and `3` as left and right -- which
+page the event detail. In the form `BLUE` saves without asking. The digits and letters above work too.
 
 On the Atari and the Apple the header carries a tab strip showing which digit
 selects which view, which is what keeps the footer to a single row. Sixteen rows
@@ -723,15 +739,198 @@ the form, `TAB` joins `RETURN` as next-field — what DOS fingers expect — and
 the form's geometry follows `ui_geom()` like everything else: the 80-column
 layout is the Apple's, the 40-column one the Atari's.
 
+## NES implementation notes
+
+A cartridge image for the FujiNet NES cartridge: cc65, MMC3 (mapper 4), 128K
+of PRG in sixteen 8K banks, 16K of CHR-RAM and the cart's 8K of WRAM. CONFIG
+boots it like any other `.nes`. The library is fujinet-lib-experimental's
+`add-nes` branch, which has no release archive for `fnlib.py` to fetch, so
+`make nes-fnlib` copies a checkout (`FNLIB_EXP`, by default the one beside
+this repo) into `_cache/`, where the defoogi container can see it, and the
+build compiles it there with the same cc65 that links the program.
+
+**Two changes outside this repo are prerequisites**, and the client does not
+work without them:
+
+- The cartridge (fn-nes `pico/nes/firmware/src/fujimail.c`) gave every
+  request 5 seconds. A `GCAL:` open answers only after an OAuth refresh, the
+  calendar list and an HTTPS fetch per calendar, and a save commits on the
+  close -- both run past 5 s on an ordinary day, and a reply that arrives late
+  is taken as the answer to the next request. Network OPEN and CLOSE now get
+  90 s (`txn_timeout()`, with a host test).
+- fujinet-lib-experimental's NES bus had no `fn_default_timeout` and no
+  `fn_device_error`, both of which `net.c` uses. They now exist, the first
+  setting how long `fn_commit()` waits, the second set to 144 when the
+  FujiNet NAKs -- after which `net.c` asks STATUS for the real code, as it
+  does on MS-DOS, so a 212 shows as "sign in to Google" rather than "no reply".
+
+**The screen** is 32x30 tiles of 8x8 text, in the Family BASIC style the NES
+CONFIG uses, laid out in rows 2-25 and columns 1-30 (the rest is overscan).
+Google's colours are where the background cannot put them:
+
+- **Every event colour is a sprite.** Four sprite palettes of three give
+  twelve slots and Google has eleven event colours, so each is a (palette,
+  tile) pair and none is quantised -- the first backend since the Adam to
+  show all eleven. `tools/nes/palette.py` matches them to the 2C02 by
+  CIEDE2000, as an assignment so no two land on the same colour, with two
+  hand overrides it explains.
+- **The selection is not an attribute.** A 16x16 attribute block is two list
+  rows, so the font is in the pattern table twice -- `$20-$7E` ink on the
+  ground, `$A0-$FE` the same ink on the line grey -- and a selected row is
+  its characters with bit 7 set. Tile & `$7F` is still the character, which is
+  what lets the capture harness read the screen as text.
+- Google's light and dark schemes are two palettes; Settings switches between
+  them at once. Today is Google's blue disc, drawn as tile pairs.
+- The mark is the 2020 icon -- the page with "31", blue across the top, deep
+  blue down the left, yellow, green and the red page-curl -- in 16x16 in the
+  header and 48x48 on the splash, its background half tiles and its red,
+  yellow and green sprites over them (`tools/nes/assets/logo*.txt`,
+  `tools/nes/mkchr.py`). "Google" on the splash is six sprites, a letter to
+  a colour as Google sets it.
+
+**Drawing** goes through a shadow of the name table and a queue the
+interrupts drain: the NMI in the vertical blank, and MMC3's scanline
+interrupt at the bottom of row 26, which turns rendering off for the rest of
+the frame (the band is the theme's ground, so it does not show) and so
+doubles the time the PPU is free. Full screens are drawn on the hidden name
+table and flipped, so nothing is ever seen half painted; selection moves,
+the clock and the form's keystrokes go straight to the shown one.
+
+**The banks.** The program does not fit in the 24K the NES sees without
+switching, so the fixed 16K and R7's 8K hold everything every screen calls,
+and the network and each family of screens take turns in the 8K window at
+`$8000` (`src/nes/gcal-nes.cfg`). The portable core is untouched: the files
+that live in an overlay are compiled with their entry points renamed
+(`-Dgc_fetch_index=bk_gc_fetch_index`, and so on), and `src/nes/tramp.c`
+defines the real names as the doors into the bank. `tools/nes/xbank.py` checks
+after every link that no module calls into another overlay except through a
+trampoline. It cannot check pointers, and one crosses: `gc_stage` points at a
+string in `net.c`'s bank, which the error screen in another bank once read as
+whatever was there, and ran off the end of its buffer -- `ui_error()` copies it
+out first. `tools/nes/budget.py` prints what is left in every bank.
+
+**The pad** is the whole of the input on a stock NES, and the NMI reads it,
+so a press made while the program is drawing or waiting on the FujiNet is
+latched rather than lost:
+
+| | pad |
+|---|---|
+| views | ↑↓ move, ←→ period, **A** open, **B** today, **SELECT** next view, **START** the menu |
+| the menu | Today, New event, Edit event, Refresh, the four views, Settings, Help, About, Quit |
+| event | ↑↓ scroll, ←→ page, **A** edit, **B** back |
+| lists | ↑↓ move, **A** choose, **B** back |
+| settings | ↑↓ pick a row, ←→ change it, **A** the calendar picker, **B** save and back |
+| form | the on-screen keyboard: pad moves, **A** types, **B** rubs out, **SELECT** next field, **START** done |
+
+A **Family BASIC keyboard** or a **Subor** in the expansion port works alongside
+the pad with the keys in "Using it", and F1-F4 the views, F5 refresh, F6
+today, F7 new, F8 the menu (in a form, save now). fujinet-lib reports no
+function keys, so `input.c` reads them off the matrix; with a keyboard
+attached the form shows which keys do what instead of the on-screen keyboard
+(A on the pad still brings it up).
+
+**The form's date, times and colour are picked, not typed:** a little month
+for the date, a wheel for each time -- ↑↓ fifteen minutes, ←→ an hour, B for
+no time at all -- and Google's eleven swatches for the colour. A choice goes
+into the field as keystrokes, so `form_validate()` judges a picked date
+exactly as it judges a typed one, and a keyboard user can type over any of
+them.
+
+**Settings** adds the theme, a 12- or 24-hour clock (12-hour, Google's US
+default, out of the box) and key clicks to the core's alarm lead and
+calendar. They live in appkey 1; key 0 keeps the layout every client of this
+family shares.
+
+**Sound** is the APU's two pulse channels: a three-chord chime for alarms, a
+jingle on the splash, and clicks that can be turned off.
+
+**Quit** resets the cartridge's image: there is nothing on a cartridge to
+return to.
+
+## H89 implementation notes
+
+A CP/M program for the Heathkit H89 and its H19 terminal: z88dk (sccz80),
+fujinet-lib's H89 bus over the FujiNet card's 82C55 at 0D0H. The library is
+fujinet-lib's `h89-setup-after-reset` branch, which has no release archive for
+`fnlib.py` to fetch, so `make h89-fnlib` copies a checkout (`FNLIB_H89`, by
+default the one beside this repo) into `_cache/`, and the build compiles it
+there with the same z88dk that links the program -- the NES's arrangement.
+
+**One change outside this repo is a prerequisite**: that branch's
+`bus/h89/fuji_bus_call.c` had no `fn_default_timeout` and no
+`fn_device_error`, both of which `net.c` uses, and its reply wait was a fixed
+15 s, which a `GCAL:` open can run past. It now has both, as the NES bus does
+(the wait is `fn_default_timeout` seconds, 144 is a NAK, after which `net.c`
+asks STATUS for the real code), and two fixes besides: it drains the port
+before each request, so a reply that came in late is not taken as the answer
+to the next one, and its frame sync gives up on an empty slot instead of
+reading FF for ever.
+
+**The screen is on the far end of a 9600-baud line.** The H19 is a terminal,
+about a thousand characters a second, and the program cannot read back what is
+on it -- so nothing here writes to it directly. Every painter writes cells
+into a copy of the screen, and `src/h89/h19.c` (fujinet-config's, adapted)
+sends only what differs from what the terminal already shows, with as few
+cursor, reverse and graphics changes as it can, once per wait for a key. A
+full screen is two seconds; moving the selection is a dozen bytes. Three
+things follow from it:
+
+- **Busy is said in place.** A banded screen that waits on the FujiNet puts
+  "Fetching..." on its own status row and the 25th line and stays put, rather
+  than blanking for a busy screen and being painted back afterwards -- two
+  full screens, four seconds, around every fetch. Only boot uses the flat one.
+- **Scrolling by one row uses the terminal's delete and insert line.** A list
+  or a detail moving under its window by one row changes every row, which the
+  difference cannot make cheap; `h19_scroll()` moves what the terminal shows
+  with `ESC M` at one end of the window and `ESC L` at the other, and the
+  difference then sends the one row that came in. The 25th line is outside
+  the page and does not move.
+- **The view loop's flush yields to the keyboard.** It stops between rows
+  when a key is waiting, because the key will repaint the screen anyway, so a
+  held arrow in the month grid skips frames instead of queueing them.
+
+**The H19's graphics characters** draw what the Apple does with MouseText,
+and more: the list is a table with ruled columns, a rule above and below and
+tees where they meet; the agenda's dates and the week's day are set into a
+rule; the month is a real grid, 7 cells of 11 by 6 weeks; the event is a box.
+The five colour chips are shapes, since the H19 has no colour -- bullet,
+block (a reverse space), checkerboard, triangle, cross -- and stay in column
+0, outside the selection bar, which would swallow the block. The mark is a
+calendar page in line characters, with the binding as bullets and, on the
+splash, a "31" three rows tall out of half blocks. The form shows each field's
+extent as an underline and puts the terminal's own block cursor at the edit
+point.
+
+**Memory is the limit, not speed.** z88dk links from 0100H, sets the stack at
+the BDOS and runs over the CCP. The smallest system worth running on is the
+62K one FNDISK needs, BDOS at D806H, and the program ends at about D0C5H --
+`tools/h89/budget.py` runs after every link and fails it past D406H (a 1K
+stack), because past the BDOS it does not fail politely: the startup clears
+BSS, wipes the BDOS with it, and hangs. Both of the Adam's overlays are on and
+the receive and reflow buffers are halved to stay there. The same script cuts
+the `.COM` where BSS begins: z88dk writes BSS into it as zeros, which made it
+end past the 62K CCP, and the CCP refused it as a BAD LOAD.
+
+z88dk's sccz80 has one trap worth knowing: arithmetic on a function call's
+pointer result (`h19_line(row) + col`) is scaled as if it pointed at ints, so
+the text lands at twice the column. Through a variable it is a byte pointer
+again (see `scr_field()`).
+
+**HDOS** shares the backend (`PLATFORM_COMBOS` maps `h89-hdos` to `src/h89/`
+too) and builds, but does not fit: HDOS loads programs at 2A80H rather than
+0100H and sits at the top of memory itself, and the same program ends past
+64K there. It stays out of `PLATFORMS` until something gives -- overlays, or
+the editor as a second program the way the CoCo 3 does it.
+
 ## Testing
 
-`make -C tests` builds the portable core natively, five times, and runs about
-200 assertions over the date arithmetic, the whole-token colour match, the
+`make -C tests` builds the portable core natively, seven times, and runs about
+280 assertions over the date arithmetic, the whole-token colour match, the
 listing parser's column derivation, the line splitter, the agenda builder, the
 wrap and sanitize helpers, the detail ingest and every one of the alarm firing
 rules. None of it needs a 6502.
 
-Five times, because the core's fixed widths are overridable and the backends do
+Seven times, because the core's fixed widths are overridable and the backends do
 override them. `hosttest` is the Atari's shape; `hosttest80` the Apple II's,
 which is the only way the reflow path is covered at all — it compiles out
 entirely without `DET_REFLOW`; `hosttest32` the CoCo's, which is the only one
@@ -742,7 +941,9 @@ and a 48-row buffer — the CoCo is 32 columns but pays for it with half the
 events and half the rows, so this is where the widest index and the narrowest
 wrap meet; and `hosttestdos` the MS-DOS shape, the only one where the wrap
 width is a runtime variable — it drives the same buffer at 38 and then 78,
-which is the only coverage the `GC_RT_COLS` hook gets at all.
+which is the only coverage the `GC_RT_COLS` hook gets at all; and
+`hosttestnes` the NES's, the only one that reflows at 28 columns; and
+`hosttesth89` the H89's, the only one that wraps at 76.
 
 One assertion differs by shape rather than passing everywhere, and it is the
 honest kind: text the adapter already wrapped to 38 columns passes through
@@ -891,6 +1092,31 @@ The script clobbers the msdos objects before and after itself:
 `MSDOS_SHOT_FLAGS` changes every object and make cannot see a flag change, so
 run `defoogi make msdos` afterwards to get the shipping binary back.
 
+
+`tools/h89-shot.sh` is the H89's harness, in fujinet-go-h89-desktop's
+`h89_headless`: it boots the 64K CP/M disk that emulator ships from one H17
+drive, runs `B:GCAL` from another, presses H19 keys by name, and writes the
+screen as text and as a PNG at each `shot`. The text has no reverse video in
+it, so the bars, the chips and the month's cursor are checked in the PNG --
+`tools/h89/revmap.py` prints which cells of one are reverse.
+
+```
+tools/h89-shot.sh                            # canned data, DAY view
+tools/h89-shot.sh "f3 shot right shot"       # keys by name, two captures
+SMALL=1 tools/h89-shot.sh "f4 down down shot"   # 3-row windows, to scroll
+REAL=1 tools/h89-shot.sh "wait:25000 shot"   # a live fujinet-pc on BoIP 9993
+```
+
+`REAL=1` runs without `--warp`, because warp resumes after two seconds of
+card silence and a Google open is longer than that. `--wait` counts real
+milliseconds, so under warp the canned clock runs about a hundred times fast.
+
+`tools/h89/hostrun.sh` is the same program built natively on the host with
+canned data, its console bytes fed through `tools/h89/h19model.py`, a model of
+the H19: seconds to see a screen, and the byte stream itself with `RAW=1`.
+It found the sccz80 pointer trap above, by drawing correctly where the
+emulator did not. The emulator is still the word on how it looks.
+
 ## Layout
 
 ```
@@ -971,8 +1197,48 @@ src/msdos/      MS-DOS backend (Open Watcom, 8086, small model)
   net_msdos.c   the FujiBusPacket DH field descriptors the library omits
   CONFIG.SYS    the driver lines, FUJI_PORT=2 for this 86Box XT
   AUTOEXEC.BAT  starts GCAL
-tests/          host-native tests, built at all five screen shapes
+src/nes/        NES backend (cc65, MMC3)
+  nes.h         geometry, tiles, palettes, banks, internal API
+  gcal-nes.cfg  the bank map
+  crt0.s        start-up, the NMI and scanline IRQ, the PPU queue, the pad
+  tramp.c       the doors into the overlays
+  screen.c      the name-table shadow, the queue's writers, sprites, palette
+  chrome.c      header, tabs, legend, clock, formatters
+  views.c       DAY and AGENDA, the panel, the alarm band (bank 1)
+  grid.c        WEEK and MONTH (bank 2)
+  detail_ui.c   the event, the calendar picker, settings (bank 3)
+  form_ui.c     the form, the on-screen keyboard, plat_getch() (bank 4)
+  pickers.c     date, time and colour pickers (bank 5)
+  screens.c     splash, busy, errors, the START menu, help, about (bank 6)
+  input.c       the pad's meaning, the Famicom keyboards
+  prefs.c       theme, clock and clicks, in appkey 1
+  plat.c        start-up, frame timing, quit
+  sound.c       the effects; sfx.s plays them and turns the spinner
+  timer.s       50 or 60 Hz
+  gen_*.s       palettes, pattern tables and the marks (tools/nes)
+src/h89/        Heathkit H89 backend (z88dk, CP/M; HDOS shares it)
+  platform.h    geometry, the graphics escapes and chips, internal API
+  h19.c         the screen copy, sent by difference; scrolling (fujinet-config)
+  con.c         raw console I/O through the BIOS or HDOS (fujinet-config)
+  kbd.c         the H19's escape sequences as keys (fujinet-config)
+  key_codes.h   those keys (fujinet-config)
+  screen.c      the painters, lines and boxes, the 25th line's legend
+  ui.c          chrome, flat screens, in-place busy, picker, settings, form
+  views.c       the four views, event detail, alarm banner
+  logo.c        the mark, a calendar page in line characters
+  input.c       the H19's keys mapped, and the flush before each read
+  timer.c       frame timing off the 2 ms tick
+  sound.c       the H19's bell
+tests/          host-native tests, built at all seven screen shapes
 tools/          headless capture and decode, per platform
+  nes-shot.sh   the NES in MAME: timed pad and keyboard presses, the screen
+                as text and a PNG (needs fn-nes pico/nes/emu grafted in)
+  nes/          the NES's palette, pattern-table and logo tools, the image
+                and bank checkers, and the library builder
+  h89-shot.sh   the H89 in fujinet-go-h89-desktop: H19 keys by name, the
+                screen as text and a PNG
+  h89/          the memory budget and .COM trim, the host build with its H19
+                model, and the reverse-video reader for captures
 mekkogx/        the cross-platform build template
 ```
 

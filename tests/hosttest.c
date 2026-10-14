@@ -1011,10 +1011,15 @@ static void test_detail(void)
 #if DET_COLS >= 38
     eq_int("38-col passthrough rows", gc_det_rows, 1);
     eq_str("38-col passthrough", gc_det[0], "A line of exactly thirty-eight chars.");
-#else
+#elif DET_COLS >= 30
     eq_int("38-col re-wrap rows", gc_det_rows, 2);
     eq_str("38-col re-wrap head", gc_det[0], "A line of exactly thirty-eight");
     eq_str("38-col re-wrap tail", gc_det[1], "chars.");
+#else
+    /* The NES's 28: "thirty-eight" no longer fits after "exactly". */
+    eq_int("38-col re-wrap rows", gc_det_rows, 2);
+    eq_str("38-col re-wrap head", gc_det[0], "A line of exactly");
+    eq_str("38-col re-wrap tail", gc_det[1], "thirty-eight chars.");
 #endif
 
     /* An 80-column line, which is what fujinet-pc sends, splits cleanly. */
@@ -1028,10 +1033,14 @@ static void test_detail(void)
     detail_finish();
 #if DET_COLS >= 40
     eq_int("80-col splits", gc_det_rows, 2);
-#else
+#elif DET_COLS >= 29
     eq_int("80-col splits", gc_det_rows, 3);
     eq_str("80-col split row0", gc_det[0], "aaaa bbbb cccc dddd eeee ffff");
     eq_str("80-col split row2", gc_det[2], "mmmm nnnn oooo pppp");
+#else
+    eq_int("80-col splits", gc_det_rows, 4);
+    eq_str("80-col split row0", gc_det[0], "aaaa bbbb cccc dddd eeee");
+    eq_str("80-col split row3", gc_det[3], "pppp");
 #endif
 
     /* CRLF must not produce a blank row between every line. */
@@ -1120,8 +1129,14 @@ static void test_detail_reflow(void)
            "we are going to mark up the Q4 slip on it before lunch.");
     rows_fit("38-col paragraph");
     /* Four wire lines of 34 do not fit on two rows of 40, so this is also the
-       assertion that the join actually happened rather than passing through. */
+       assertion that the join actually happened rather than passing through.
+       At the NES's 28 the paragraph is five rows -- still one fewer than the
+       six the four wire lines would re-wrap into one by one. */
+#if DET_COLS >= 60
     eq_int("38-col paragraph rows", gc_det_rows, 2);
+#else
+    eq_int("38-col paragraph rows", gc_det_rows, 5);
+#endif
 
     /* A blank line ends the paragraph and survives as a blank row, or two
        paragraphs run together into a wall of text. */
@@ -1132,11 +1147,20 @@ static void test_detail_reflow(void)
     ingest("\x9B");
     ingest("Dial-in is the usual bridge.\x9B");
     detail_finish();
+#if DET_COLS >= 60
     eq_int("blank splits into three rows", gc_det_rows, 3);
     eq_str("para one", gc_det[0],
            "Round the table, two minutes each. Bring the roadmap.");
     eq_str("blank row kept", gc_det[1], "");
     eq_str("para two", gc_det[2], "Dial-in is the usual bridge.");
+#else
+    /* Narrower than the paragraph: it takes two rows, then the blank. */
+    eq_int("blank splits into four rows", gc_det_rows, 4);
+    eq_str("para one", joined(0, 1),
+           "Round the table, two minutes each. Bring the roadmap.");
+    eq_str("blank row kept", gc_det[2], "");
+    eq_str("para two", gc_det[3], "Dial-in is the usual bridge.");
+#endif
 
     /*
      * The header block. Each line is a field in its own right, and a long one
@@ -1149,11 +1173,21 @@ static void test_detail_reflow(void)
     ingest("Category: Personal Projects And Errands\x9B");
     ingest("Where: Room 3, second floor\x9B");
     detail_finish();
+#if DET_COLS >= 39
     eq_int("header rows", gc_det_rows, 3);
     eq_str("repeats alone", gc_det[0], "Repeats");
     eq_str("category alone", gc_det[1],
            "Category: Personal Projects And Errands");
     eq_str("where alone", gc_det[2], "Where: Room 3, second floor");
+#else
+    /* The category line is wider than the screen and wraps, but on its own:
+       Where still starts a row. */
+    eq_int("header rows", gc_det_rows, 4);
+    eq_str("repeats alone", gc_det[0], "Repeats");
+    eq_str("category alone", joined(1, 2),
+           "Category: Personal Projects And Errands");
+    eq_str("where alone", gc_det[3], "Where: Room 3, second floor");
+#endif
 
     /* Nothing is joined until a line long enough to estimate the adapter's
        wrap width has been seen, so a reply of nothing but short lines passes

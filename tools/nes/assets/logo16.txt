@@ -1,0 +1,22 @@
+# The Google Calendar mark, 16x16. tools/nes/mkchr.py cuts it into 8x8
+# cells: B (brand blue), D (deep blue) and W (the white page) are background
+# tiles in BP3; R, Y and N (green) are sprites in SP0, Tomato/Banana/Basil,
+# laid over the same cells. '.' is the ground. The page with "31" on it, blue
+# across the top, deep blue down the left, yellow down the right, green along
+# the bottom and the red page-curl at the corner: the 2020 icon.
+.BBBBBBBBBBBBBB.
+BBBBBBBBBBBBBBBB
+DDWWWWWWWWWWWWYY
+DDWWWWWWWWWWWWYY
+DDWWWWWWWWWWWWYY
+DDWWBBBWWBWWWWYY
+DDWWWWBWBBWWWWYY
+DDWWWBBWWBWWWWYY
+DDWWWWBWWBWWWWYY
+DDWWBBBWBBBWWWYY
+DDWWWWWWWWWWWWYY
+DDWWWWWWWWWWWWYY
+DDWWWWWWWWWWWWYY
+DDWWWWWWWWWWWWYY
+DDNNNNNNNNNNNN.R
+.DNNNNNNNNNNNNRR
