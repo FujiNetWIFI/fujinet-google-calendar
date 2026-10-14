@@ -5,6 +5,7 @@ PLATFORMS += atari
 PLATFORMS += coco
 PLATFORMS += msdos
 PLATFORMS += nes
+PLATFORMS += h89-cpm
 
 # This list is the backends that exist in src/, not the platforms mekkogx can
 # target. SRC_DIRS globs src/%PLATFORM% with $(wildcard), so a platform with no
@@ -470,6 +471,90 @@ nes/executable-post::
 	python3 tools/nes/xbank.py r2r/nes/gcal.map build/$(PRODUCT)/nes
 	python3 tools/nes/budget.py r2r/nes/gcal.map
 
+# The Heathkit H89 runs CP/M (h89-cpm) or HDOS (h89-hdos), and both builds
+# share src/h89/ through PLATFORM_COMBOS -- the backend draws on the H19
+# terminal, which is the same under either. Only CP/M is in PLATFORMS so far;
+# HDOS goes in once it fits its smaller memory with FN: loaded.
+#
+# The screen is the Apple //e's 80x24 plus the H19's 25th line, so the knobs
+# start as the Apple's. DET_COLS is 76 because the description sits inside a
+# frame, and DET_WIN is 17 because the frame's borders take two rows the
+# Apple spends on text. Both overlays are on, as on the Adam: the form and the
+# calendar list ride the detail buffer, 1.2K for nothing.
+#
+# Memory is the constraint here, not speed. z88dk links from 0100H and sets
+# the stack at the BDOS, overwriting the CCP; a 62K CP/M -- what FNDISK needs
+# -- has the BDOS at D806H, so tools/h89/budget.py fails the link if the end
+# of BSS is past D406H (a 1K stack) and warns past DC06H (the 64K system).
+CFLAGS_EXTRA_H89-CPM  = -DBUILD_H89 -O3
+CFLAGS_EXTRA_H89-CPM += -DTITLE_LEN=50 -DDET_COLS=76 -DDET_ROWS=32
+CFLAGS_EXTRA_H89-CPM += -DDET_LINE_CAP=256 -DDET_REFLOW -DGC_KEEP_CAT
+CFLAGS_EXTRA_H89-CPM += -DLIST_ROWS=$(H89_LIST_ROWS) -DPICK_ROWS=14
+CFLAGS_EXTRA_H89-CPM += -DDET_WIN=$(H89_DET_WIN)
+CFLAGS_EXTRA_H89-CPM += -DFRM_LOC_MAX=50 -DFRM_DESC_MAX=160
+CFLAGS_EXTRA_H89-CPM += -DGC_FORM_OVERLAY -DGC_CALS_OVERLAY
+
+# Half the Apple's receive buffer and reflow accumulator, as the Adam and
+# the NES have: 512 bytes that pay for headroom under the ceiling, for the
+# cost of a few more bus calls a fetch and a long paragraph rejoined in two.
+CFLAGS_EXTRA_H89-CPM += -DGC_RXBUF=256
+
+# tools/h89-shot.sh appends -DGC_FAKE_DATA through here, and SMALL=1 there
+# sets the two windows to three rows, so the canned lists scroll. (zcc will
+# not let a later -D redefine an earlier one, -U or no -U.)
+CFLAGS_EXTRA_H89-CPM += $(H89_SHOT_FLAGS)
+H89_LIST_ROWS ?= 18
+H89_DET_WIN ?= 17
+
+# Nothing here opens a file, reads argv or touches stdio, so the CP/M crt
+# need not set up any of them.
+LDFLAGS_EXTRA_H89-CPM  = -m -pragma-define:CLIB_OPEN_MAX=0
+LDFLAGS_EXTRA_H89-CPM += -pragma-define:CRT_ENABLE_STDIO=0
+LDFLAGS_EXTRA_H89-CPM += -pragma-define:CRT_ENABLE_COMMANDLINE=0
+
+# HDOS loads programs from 2280H; z88dk's startup links them at 4480H (a
+# misreading of Heath's split octal 042.200). Link at 2A80H with the stack
+# in the 2K under the program, as fujinet-config does.
+CFLAGS_EXTRA_H89-HDOS  = $(CFLAGS_EXTRA_H89-CPM)
+LDFLAGS_EXTRA_H89-HDOS = -m -pragma-define:CRT_ORG_CODE=0x2A80 -pragma-define:REGISTER_SP=0x2A80
+
+# fujinet-lib for the H89 is the h89-setup-after-reset branch, which has no
+# release archive (and carries fn_default_timeout / fn_device_error, which
+# net.c needs). `make h89-fnlib` copies a checkout (FNLIB_H89, by default the
+# one beside this repo) into _cache/, where the defoogi container can see it,
+# and the library is built from that copy by the same z88dk that links the
+# program.
+FNLIB_H89 ?= $(HOME)/Workspace/fujinet-lib
+FNLIB_H89_SRC = $(CACHE_DIR)/fujinet-lib-h89
+
+ifneq ($(filter h89-cpm h89-hdos,$(PLATFORM)),)
+  FUJINET_LIB := __UNDEFINED__
+  FNLIB_H89_LIB = $(FNLIB_H89_SRC)/r2r/$(PLATFORM)/fujinet.$(PLATFORM).lib
+  EXTRA_INCLUDE += $(FNLIB_H89_SRC)/include
+  LIBS += -L$(FNLIB_H89_SRC)/r2r/$(PLATFORM) -lfujinet.$(PLATFORM).lib
+  EXECUTABLE_EXTRA_DEPS += $(FNLIB_H89_LIB)
+
+# Every object includes the library's headers, so the library comes first.
+$(patsubst %.c,build/$(PRODUCT)/$(PLATFORM)/%.o,$(wildcard src/*.c src/h89/*.c)): | $(FNLIB_H89_LIB)
+
+$(FNLIB_H89_LIB):
+	@[ -d $(FNLIB_H89_SRC)/bus/h89 ] || { echo "No $(FNLIB_H89_SRC): run 'make h89-fnlib' on the host first" >&2; exit 1; }
+	MAKEFLAGS= $(MAKE) -C $(FNLIB_H89_SRC) $(PLATFORM)/r2r
+endif
+
+.PHONY: h89-fnlib
+h89-fnlib:
+	rm -rf $(FNLIB_H89_SRC)
+	mkdir -p $(FNLIB_H89_SRC)
+	cp -r $(FNLIB_H89)/Makefile $(FNLIB_H89)/include $(FNLIB_H89)/common $(FNLIB_H89)/bus $(FNLIB_H89)/makefiles $(FNLIB_H89_SRC)/
+	(cd $(FNLIB_H89) && git rev-parse --short HEAD && git status --porcelain Makefile bus/h89 common include makefiles) > $(FNLIB_H89_SRC)/VERSION
+
+# The memory budget (see above), and the .COM cut where BSS starts: z88dk
+# writes BSS into it as zeros, which made it too long for the 62K CCP to
+# load. The map is written beside the program.
+h89-cpm/executable-post::
+	python3 tools/h89/budget.py r2r/h89-cpm/gcal.map --trim $(wildcard r2r/h89-cpm/gcal.com r2r/h89-cpm/GCAL.COM)
+
 # HIRESTXT_LIB can be
 # - a version number such as 0.5.0.2
 # - a directory which contains the built library
@@ -486,7 +571,9 @@ PLATFORM_COMBOS = \
   atarixe+=atari \
   msxrom+=msx \
   msxdos+=msx \
-  adam_cpm+=adam
+  adam_cpm+=adam \
+  h89-cpm+=h89 \
+  h89-hdos+=h89
 
 include mekkogx/toplevel-rules.mk
 

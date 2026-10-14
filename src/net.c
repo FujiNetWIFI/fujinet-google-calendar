@@ -145,8 +145,9 @@ static unsigned char st_ok(unsigned char code)
  * Anything other than 144 -- 138 timeout, 139 NAK, 143 checksum -- means the
  * device never gave us a usable reply at all, which is the timeout case.
  *
- * The INT F5 bus is different, and so is the NES cartridge's mailbox: neither
- * layer writes fn_network_error at all, so the Atari reading above would
+ * The INT F5 bus is different, and so are the NES cartridge's mailbox and
+ * the H89's FujiBus: none of those layers writes fn_network_error after a
+ * failed open, so the Atari reading above would
  * report every failed open as a timeout -- including the 212 "authorize
  * Google in the Web UI" a first-time user is guaranteed to hit. The fix is to
  * ask, once. The channel is still addressable because network_open set the
@@ -161,7 +162,7 @@ static unsigned char open_error(void)
        the failure path issues another SIO command and overwrites it. */
     gc_dev_ecode = fn_device_error;
 
-#if defined(__MSDOS__) || defined(__NES__)
+#if defined(__MSDOS__) || defined(__NES__) || defined(__H89__)
     {
         unsigned char dev  = gc_dev_ecode;
         unsigned char code = probe();
