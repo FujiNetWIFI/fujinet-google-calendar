@@ -483,11 +483,18 @@ nes/executable-post::
 # calendar list ride the detail buffer, 1.2K for nothing.
 #
 # Memory is the constraint here, not speed. z88dk links from 0100H and sets
-# the stack at the BDOS, overwriting the CCP; a 62K CP/M -- what FNDISK needs
-# -- has the BDOS at D806H, so tools/h89/budget.py fails the link if the end
-# of BSS is past D406H (a 1K stack) and warns past DC06H (the 64K system).
+# the stack at the BDOS, overwriting the CCP. The smallest CP/M it runs on is
+# the one on an SEBHC CF card, whose bigger BIOS puts the BDOS at CD06H --
+# 2.75K under the 62K system FNDISK needs -- so tools/h89/budget.py fails the
+# link if the end of BSS is past CB06H (H89_STACK, below), and on anything
+# smaller still src/h89/tpa.asm says so at startup rather than crash on it.
+#
+# What fits it under there, against the Apple's knobs: MAX_EVENTS 48, as on
+# the Atari and the NES (a busy week says "more" sooner; the agenda asks
+# ?count=48), and DET_ROWS 24, which is 1.8K of description at 76 columns --
+# seven rows of scrolling past the window -- for 600 bytes.
 CFLAGS_EXTRA_H89-CPM  = -DBUILD_H89 -O3
-CFLAGS_EXTRA_H89-CPM += -DTITLE_LEN=50 -DDET_COLS=76 -DDET_ROWS=32
+CFLAGS_EXTRA_H89-CPM += -DTITLE_LEN=50 -DDET_COLS=76 -DDET_ROWS=24 -DMAX_EVENTS=48
 CFLAGS_EXTRA_H89-CPM += -DDET_LINE_CAP=256 -DDET_REFLOW -DGC_KEEP_CAT
 CFLAGS_EXTRA_H89-CPM += -DLIST_ROWS=$(H89_LIST_ROWS) -DPICK_ROWS=14
 CFLAGS_EXTRA_H89-CPM += -DDET_WIN=$(H89_DET_WIN)
@@ -511,6 +518,20 @@ H89_DET_WIN ?= 17
 LDFLAGS_EXTRA_H89-CPM  = -m -pragma-define:CLIB_OPEN_MAX=0
 LDFLAGS_EXTRA_H89-CPM += -pragma-define:CRT_ENABLE_STDIO=0
 LDFLAGS_EXTRA_H89-CPM += -pragma-define:CRT_ENABLE_COMMANDLINE=0
+
+# The startup does not clear BSS: src/h89/tpa.asm does, once it has checked
+# that the BDOS is above it with H89_STACK to spare. Cleared regardless, as
+# the startup would, on a CP/M with a smaller TPA than this program needs
+# (a CF card's BIOS is bigger than Heath's), it takes the BDOS and its own
+# return address with it and lands in a warm boot without a word.
+#
+# The stack was measured at 232 bytes deep (paint the memory under it, run
+# every view, the detail, the form and a fetch, see what was overwritten),
+# so 512 is twice that, and every byte of it is TPA the check does not ask
+# a smaller system for.
+H89_STACK ?= 512
+LDFLAGS_EXTRA_H89-CPM += -pragma-define:CRT_INITIALIZE_BSS=0
+ASFLAGS_EXTRA_H89-CPM  = -DH89_CPM -DH89_STACK=$(H89_STACK)
 
 # HDOS loads programs from 2280H; z88dk's startup links them at 4480H (a
 # misreading of Heath's split octal 042.200). Link at 2A80H with the stack
@@ -537,6 +558,10 @@ ifneq ($(filter h89-cpm h89-hdos,$(PLATFORM)),)
 # Every object includes the library's headers, so the library comes first.
 $(patsubst %.c,build/$(PRODUCT)/$(PLATFORM)/%.o,$(wildcard src/*.c src/h89/*.c)): | $(FNLIB_H89_LIB)
 
+# z80asm writes no dependency file for tpa.asm, and the build's -include of
+# one would otherwise fall through to the top level's catch-all and complain.
+build/$(PRODUCT)/$(PLATFORM)/src/h89/tpa.d: ;
+
 $(FNLIB_H89_LIB):
 	@[ -d $(FNLIB_H89_SRC)/bus/h89 ] || { echo "No $(FNLIB_H89_SRC): run 'make h89-fnlib' on the host first" >&2; exit 1; }
 	MAKEFLAGS= $(MAKE) -C $(FNLIB_H89_SRC) $(PLATFORM)/r2r
@@ -553,7 +578,7 @@ h89-fnlib:
 # writes BSS into it as zeros, which made it too long for the 62K CCP to
 # load. The map is written beside the program.
 h89-cpm/executable-post::
-	python3 tools/h89/budget.py r2r/h89-cpm/gcal.map --trim $(wildcard r2r/h89-cpm/gcal.com r2r/h89-cpm/GCAL.COM)
+	python3 tools/h89/budget.py r2r/h89-cpm/gcal.map --stack $(H89_STACK) --trim $(wildcard r2r/h89-cpm/gcal.com r2r/h89-cpm/GCAL.COM)
 
 # HIRESTXT_LIB can be
 # - a version number such as 0.5.0.2
