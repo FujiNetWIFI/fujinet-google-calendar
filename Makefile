@@ -539,40 +539,19 @@ ASFLAGS_EXTRA_H89-CPM  = -DH89_CPM -DH89_STACK=$(H89_STACK)
 CFLAGS_EXTRA_H89-HDOS  = $(CFLAGS_EXTRA_H89-CPM)
 LDFLAGS_EXTRA_H89-HDOS = -m -pragma-define:CRT_ORG_CODE=0x2A80 -pragma-define:REGISTER_SP=0x2A80
 
-# fujinet-lib for the H89 is the h89-setup-after-reset branch, which has no
-# release archive (and carries fn_default_timeout / fn_device_error, which
-# net.c needs). `make h89-fnlib` copies a checkout (FNLIB_H89, by default the
-# one beside this repo) into _cache/, where the defoogi container can see it,
-# and the library is built from that copy by the same z88dk that links the
-# program.
-FNLIB_H89 ?= $(HOME)/Workspace/fujinet-lib
-FNLIB_H89_SRC = $(CACHE_DIR)/fujinet-lib-h89
-
+# fujinet-lib for the H89 is the fork's h89-setup-after-reset branch: it has no
+# release archive, and it carries fn_default_timeout / fn_device_error, which
+# net.c needs and upstream 5.x dropped. fnlib.py clones it into _cache/ and
+# builds <platform>/r2r there, inside the defoogi container, so `make clean`
+# (which removes _cache/) needs no step on the host. To use a local checkout,
+# copy it under _cache/ and pass FUJINET_LIB=_cache/<dir> on the command line.
 ifneq ($(filter h89-cpm h89-hdos,$(PLATFORM)),)
-  FUJINET_LIB := __UNDEFINED__
-  FNLIB_H89_LIB = $(FNLIB_H89_SRC)/r2r/$(PLATFORM)/fujinet.$(PLATFORM).lib
-  EXTRA_INCLUDE += $(FNLIB_H89_SRC)/include
-  LIBS += -L$(FNLIB_H89_SRC)/r2r/$(PLATFORM) -lfujinet.$(PLATFORM).lib
-  EXECUTABLE_EXTRA_DEPS += $(FNLIB_H89_LIB)
-
-# Every object includes the library's headers, so the library comes first.
-$(patsubst %.c,build/$(PRODUCT)/$(PLATFORM)/%.o,$(wildcard src/*.c src/h89/*.c)): | $(FNLIB_H89_LIB)
+  FUJINET_LIB := https://github.com/tschak909/fujinet-lib\#h89-setup-after-reset
 
 # z80asm writes no dependency file for tpa.asm, and the build's -include of
 # one would otherwise fall through to the top level's catch-all and complain.
 build/$(PRODUCT)/$(PLATFORM)/src/h89/tpa.d: ;
-
-$(FNLIB_H89_LIB):
-	@[ -d $(FNLIB_H89_SRC)/bus/h89 ] || { echo "No $(FNLIB_H89_SRC): run 'make h89-fnlib' on the host first" >&2; exit 1; }
-	MAKEFLAGS= $(MAKE) -C $(FNLIB_H89_SRC) $(PLATFORM)/r2r
 endif
-
-.PHONY: h89-fnlib
-h89-fnlib:
-	rm -rf $(FNLIB_H89_SRC)
-	mkdir -p $(FNLIB_H89_SRC)
-	cp -r $(FNLIB_H89)/Makefile $(FNLIB_H89)/include $(FNLIB_H89)/common $(FNLIB_H89)/bus $(FNLIB_H89)/makefiles $(FNLIB_H89_SRC)/
-	(cd $(FNLIB_H89) && git rev-parse --short HEAD && git status --porcelain Makefile bus/h89 common include makefiles) > $(FNLIB_H89_SRC)/VERSION
 
 # The memory budget (see above), and the .COM cut where BSS starts: z88dk
 # writes BSS into it as zeros, which made it too long for the 62K CCP to
